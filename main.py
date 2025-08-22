@@ -17,17 +17,18 @@ def main():
     class fantasyFootballSignature(dspy.Signature):
         """This tool is a researcher for players in the 2025 fantasy football season"""
         playerName: str = dspy.InputField(desc="Fantasy Football Player Name")
-        playing_time: int = dspy.OutputField(desc="A value from -5 to 5 indicating whether we should expect more or less playing time. -5 means way less vs 2024. 0 means about the same, 5 means more playing time")
-        injury_risk: int = dspy.OutputField(desc="A value from 0 to 5 indicating likelihood for injury. 0 means very low likelihood, while 5 means very high likelihood")
-        breakout_risk: int = dspy.OutputField(desc="A rating from 0 to 5 indicating the likelihood that they have a significantly better year. 0 means low likelihood. 5 means high likelihood")
-        bust_risk: int = dspy.OutputField(desc="A rating from 0 to 5 indicating the likelihood that they have a significantly worse year. 0 means low likehood. 5 means high likelihood")
+        playing_time: str = dspy.OutputField(desc="Indications about how this players snap count may compare vs the previous season.")
+        injury_risk: str = dspy.OutputField(desc="Research on the injury risk for this player in 2025")
+        breakout_risk: str = dspy.OutputField(desc="Research on whether people expect this player to potentially breakout, which we define as a significant improvement to their per game points")
+        bust_risk: str = dspy.OutputField(desc="Research on whether this player could be a bust, particularly relative to where they are being drafted")
         key_changes: str = dspy.OutputField(desc="Personnel changes or coaching changes on the team that may affect their playing time or effectiveness")
         outlook: str = dspy.OutputField(desc="An overall assessment of their outlook")
 
     guru = dspy.Predict(fantasyFootballSignature)
 
     player_data = guru(playerName=args.player_name)
-    create_player_card(args.player_name, player_data)
+    print (player_data)
+    #create_player_card(args.player_name, player_data)
 
 if __name__ == "__main__":
     main()
