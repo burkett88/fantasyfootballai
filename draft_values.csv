@@ -1,0 +1,320 @@
+Position,Rank,Player,Team,Value
+QB,1,Josh Allen,BUF,32
+QB,2,Lamar Jackson,BAL,31
+QB,3,Jalen Hurts,PHI,26
+QB,4,Jayden Daniels,WAS,25
+QB,5,Joe Burrow,CIN,20
+QB,6,Patrick Mahomes II,KC,16
+QB,7,Baker Mayfield,TB,13
+QB,8,Kyler Murray,ARI,12
+QB,9,Brock Purdy,SF,11
+QB,10,Bo Nix,DEN,10
+QB,11,Justin Fields,NYJ,7
+QB,12,J.J. McCarthy,MIN,4
+QB,13,Dak Prescott,DAL,4
+QB,14,Justin Herbert,LAC,4
+QB,15,Caleb Williams,CHI,3
+QB,16,Jared Goff,DET,3
+QB,17,C.J. Stroud,HOU,2
+QB,18,Jordan Love,GBDTD,1
+QB,19,Drake Maye,NE,1
+QB,20,Trevor Lawrence,JAC,0
+QB,21,Michael Penix Jr.,ATL,0
+QB,22,Bryce Young,CAR,0
+QB,23,Tua Tagovailoa,MIA,0
+QB,24,Matthew Stafford,LAR,0
+QB,25,Geno Smith,LV,0
+QB,26,Cam Ward,TEN,0
+QB,27,Sam Darnold,SEA,0
+QB,28,Aaron Rodgers,PIT,0
+QB,29,Daniel Jones,IND,0
+QB,30,Russell Wilson,NYG,0
+QB,31,Tyler Shough,NO,0
+QB,32,Joe Flacco,CLE,0
+DST,1,Buffalo Bills,,2
+DST,2,Denver Broncos,,2
+DST,3,Philadelphia Eagles,,2
+DST,4,Houston Texans,,2
+DST,5,Baltimore Ravens,,2
+DST,6,Dallas Cowboys,,1
+DST,7,Pittsburgh Steelers,,1
+DST,8,Green Bay Packers,,1
+DST,9,Minnesota Vikings,,1
+DST,10,New York Giants,,1
+DST,11,Detroit Lions,,1
+DST,12,Los Angeles Rams,,1
+DST,13,Los Angeles Chargers,,0
+DST,14,San Francisco 49ers,,0
+DST,15,Tampa Bay Buccaneers,,0
+DST,16,W. Commanders,,0
+DST,17,Kansas City Chiefs,,0
+DST,18,Chicago Bears,,0
+DST,19,Seattle Seahawks,,0
+DST,20,Indianapolis Colts,,0
+DST,21,Arizona Cardinals,,0
+DST,22,Cleveland Browns,,0
+DST,23,New York Jets,,0
+DST,24,Cincinnati Bengals,,0
+DST,25,Las Vegas Raiders,,0
+DST,26,Miami Dolphins,,0
+DST,27,Atlanta Falcons,,0
+DST,28,Jacksonville Jaguars,,0
+DST,29,New Orleans Saints,,0
+DST,30,Tennessee Titans,,0
+DST,31,New England Patriots,,0
+DST,32,Carolina Panthers,,0
+RB,1,Saquon Barkley,PHI,53
+RB,2,Bijan Robinson,ATL,50
+RB,3,Jahmyr Gibbs,DET,48
+RB,4,Derrick Henry,BAL,46
+RB,5,Jonathan Taylor,IND,39
+RB,6,Christian McCaffrey,SF,39
+RB,7,Josh Jacobs,GB,39
+RB,8,Ashton Jeanty,LV,35
+RB,9,Kyren Williams,LAR,35
+RB,10,De'Von Achane,MIADTD,34
+RB,11,Bucky Irving,TB,31
+RB,12,James Cook,BUF,30
+RB,13,Chase Brown,CIN,30
+RB,14,James Conner,ARI,25
+RB,15,Chuba Hubbard,CAR,24
+RB,16,Omarion Hampton,LAC,23
+RB,17,Breece Hall,NYJ,23
+RB,18,Alvin Kamara,NO,23
+RB,19,Kenneth Walker III,SEA,23
+RB,20,David Montgomery,DET,19
+RB,21,D'Andre Swift,CHI,19
+RB,22,TreVeyon Henderson,NE,17
+RB,23,Tony Pollard,TEN,17
+RB,24,Aaron Jones Sr.,MIN,16
+RB,25,Isiah Pacheco,KC,13
+RB,26,RJ Harvey,DEN,13
+RB,27,Kaleb Johnson,PIT,12
+RB,28,Tyrone Tracy Jr.,NYG,12
+RB,29,Joe Mixon,HOUNFI,12
+RB,30,Jaylen Warren,PIT,10
+RB,31,J. Croskey-merritt,WAS,9
+RB,32,Austin Ekeler,WAS,8
+RB,33,Quinshon Judkins,CLE,8
+RB,34,Jordan Mason,MIN,7
+RB,35,J.K. Dobbins,DEN,7
+RB,36,Travis Etienne Jr.,JAC,7
+RB,37,Rhamondre Stevenson,NEDTD,7
+RB,38,Zach Charbonnet,SEA,7
+RB,39,Javonte Williams,DAL,6
+RB,40,Tank Bigsby,JAC,6
+RB,41,Tyjae Spears,TENDTD,5
+RB,42,Rachaad White,TBDTD,5
+RB,43,Najee Harris,LACNFI,5
+RB,44,Jerome Ford,CLE,5
+RB,45,Cam Skattebo,NYG,5
+RB,46,Trey Benson,ARI,4
+RB,47,Nick Chubb,HOU,4
+RB,48,Jaylen Wright,MIA,3
+RB,49,Tyler Allgeier,ATL,3
+RB,50,Dylan Sampson,CLE,3
+RB,51,Jaydon Blue,DALDTD,3
+RB,52,Ray Davis,BUF,3
+RB,53,Braelon Allen,NYJ,3
+RB,54,Rico Dowdle,CAR,2
+RB,55,Bhayshul Tuten,JAC,2
+RB,56,Roschon Johnson,CHIDTD,2
+RB,57,MarShawn Lloyd,GBDTD,2
+RB,58,Kareem Hunt,KCDTD,2
+RB,59,Miles Sanders,DAL,1
+RB,60,Woody Marks,HOU,1
+RB,61,Brian Robinson Jr.,SF,0
+RB,62,Kendre Miller,NO,0
+RB,63,Raheem Mostert,LV,0
+RB,64,Justice Hill,BAL,0
+RB,65,Blake Corum,LAR,0
+RB,66,Keaton Mitchell,BAL,0
+RB,67,Chris Rodriguez Jr.,WAS,0
+RB,68,Ollie Gordon II,MIA,0
+RB,69,Ty Johnson,BUF,0
+RB,70,C. Patterson,,0
+RB,71,Isaac Guerendo,SF,0
+RB,72,Samaje Perine,CIN,0
+RB,73,Jarquez Hunter,LAR,0
+RB,74,Tahj Brooks,CIN,0
+RB,75,Antonio Gibson,NE,0
+RB,76,Elijah Mitchell,KC,0
+RB,77,Kyle Monangai,CHI,0
+RB,78,Kenneth Gainwell,PIT,0
+RB,79,Devin Singletary,NYG,0
+RB,80,Trevor Etienne,CAR,0
+RB,81,Khalil Herbert,IND,0
+RB,82,Will Shipley,PHI,0
+RB,83,Sean Tucker,TB,0
+RB,84,Devin Neal,NO,0
+RB,85,Emanuel Wilson,GB,0
+RB,86,Jaleel McLaughlin,DEN,0
+RB,87,Zamir White,LV,0
+RB,88,A.J. Dillon,PHI,0
+RB,89,DJ Giddens,IND,0
+RB,90,Audric Estime,DEN,0
+RB,91,Amar Johnson,GB,0
+WR,1,Ja'Marr Chase,CIN,60
+WR,2,Justin Jefferson,MIN,46
+WR,3,CeeDee Lamb,DAL,41
+WR,4,Puka Nacua,LAR,39
+WR,5,Malik Nabers,NYG,37
+WR,6,Nico Collins,HOU,37
+WR,7,Brian Thomas Jr.,JAC,37
+WR,8,Amon-Ra St. Brown,DET,35
+WR,9,A.J. Brown,PHIDTD,32
+WR,10,Drake London,ATL,32
+WR,11,Tyreek Hill,MIADTD,30
+WR,12,Mike Evans,TB,29
+WR,13,Ladd McConkey,LAC,28
+WR,14,Tee Higgins,CIN,27
+WR,15,Davante Adams,LAR,26
+WR,16,DK Metcalf,PIT,24
+WR,17,Terry McLaurin,WAS,24
+WR,18,Marvin Harrison Jr.,ARI,23
+WR,19,Jaxon Smith-Njigba,SEA,22
+WR,20,Xavier Worthy,KC,21
+WR,21,Zay Flowers,BAL,20
+WR,22,Courtland Sutton,DEN,19
+WR,23,DJ Moore,CHI,19
+WR,24,Jameson Williams,DET,19
+WR,25,Garrett Wilson,NYJ,19
+WR,26,Calvin Ridley,TEN,18
+WR,27,George Pickens,DAL,17
+WR,28,DeVonta Smith,PHI,16
+WR,29,Jerry Jeudy,CLE,14
+WR,30,Deebo Samuel Sr.,WAS,13
+WR,31,Tetairoa McMillan,CARDTD,12
+WR,32,Jakobi Meyers,LV,12
+WR,33,Jaylen Waddle,MIA,11
+WR,34,Matthew Golden,GB,10
+WR,35,Travis Hunter,JACDTD,9
+WR,36,Jauan Jennings,SFDTD,8
+WR,37,Rome Odunze,CHI,8
+WR,38,Keon Coleman,BUF,8
+WR,39,Chris Olave,NODTD,8
+WR,40,Jayden Reed,GBDTD,8
+WR,41,Ricky Pearsall,SF,7
+WR,42,Rashid Shaheed,NO,7
+WR,43,Rashee Rice,KCDTD,7
+WR,44,Stefon Diggs,NEDTD,7
+WR,45,Jordan Addison,MINSUS,7
+WR,46,Michael Pittman Jr.,IND,6
+WR,47,Cooper Kupp,SEA,6
+WR,48,Chris Godwin Jr.,TBPUP,5
+WR,49,Emeka Egbuka,TB,5
+WR,50,Khalil Shakir,BUFDTD,5
+WR,51,Darnell Mooney,ATLDTD,5
+WR,52,Marvin Mims Jr.,DEN,4
+WR,53,Josh Downs,INDDTD,3
+WR,54,Rashod Bateman,BAL,3
+WR,55,Marquise Brown,KCDTD,1
+WR,56,Cedric Tillman,CLE,1
+WR,57,Keenan Allen,LAC,1
+WR,58,Adam Thielen,CAR,0
+WR,59,Jayden Higgins,HOU,0
+WR,60,Christian Kirk,HOU,0
+WR,61,Xavier Legette,CAR,0
+WR,62,Romeo Doubs,GB,0
+WR,63,Wan'Dale Robinson,NYG,0
+WR,64,Brandon Aiyuk,SF,0
+WR,65,DeMario Douglas,NE,0
+WR,66,Joshua Palmer,BUF,0
+WR,67,Tyler Lockett,TEN,0
+WR,68,Luther Burden III,CHI,0
+WR,69,Michael Wilson,ARI,0
+WR,70,C. Patterson,,0
+WR,71,Alec Pierce,IND,0
+WR,72,Tre' Harris,LAC,0
+WR,73,Calvin Austin III,PIT,0
+WR,74,Quentin Johnston,LAC,0
+WR,75,Darius Slayton,NYG,0
+WR,76,Ray-Ray McCloud III,ATL,0
+WR,77,Jack Bech,LV,0
+WR,78,Dyami Brown,JAC,0
+WR,79,Josh Reynolds,NYJ,0
+WR,80,Tutu Atwell,LAR,0
+WR,81,N. Westbrook-ikhine,MIA,0
+WR,82,DeAndre Hopkins,BAL,0
+WR,83,Kyle Williams,NE,0
+WR,84,Jalen Tolbert,DAL,0
+WR,85,Andrei Iosivas,CIN,0
+WR,86,Jalen Nailor,MIN,0
+WR,87,Tre Tucker,LV,0
+WR,88,Brandin Cooks,NO,0
+WR,89,Jordan Whittington,LAR,0
+WR,90,Diontae Johnson,CLE,0
+WR,91,M. Valdes-scantling,SEA,0
+WR,92,Troy Franklin,DEN,0
+WR,93,Tory Horton,SEA,0
+WR,94,Jalen Coker,CAR,0
+WR,95,Dontayvion Wicks,GB,0
+WR,96,Kayshon Boutte,NE,0
+WR,97,Noah Brown,WAS,0
+WR,98,Christian Watson,GB,0
+WR,99,Adonai Mitchell,IND,0
+WR,100,Pat Bryant,DEN,0
+TE,1,Brock Bowers,LV,30
+TE,2,George Kittle,SF,29
+TE,3,Trey McBride,ARI,26
+TE,4,Sam LaPorta,DET,16
+TE,5,Mark Andrews,BAL,16
+TE,6,Travis Kelce,KC,12
+TE,7,T.J. Hockenson,MIN,11
+TE,8,David Njoku,CLE,10
+TE,9,Tyler Warren,IND,7
+TE,10,Tucker Kraft,GB,6
+TE,11,Kyle Pitts Sr.,ATL,5
+TE,12,Dallas Goedert,PHI,3
+TE,13,Evan Engram,DEN,3
+TE,14,Zach Ertz,WAS,3
+TE,15,Dalton Kincaid,BUF,3
+TE,16,Jake Ferguson,DALDTD,3
+TE,17,Hunter Henry,NE,2
+TE,18,Colston Loveland,CHI,1
+TE,19,Isaiah Likely,BALPUP,1
+TE,20,Cade Otton,TB,0
+TE,21,Brenton Strange,JAC,0
+TE,22,Jonnu Smith,PIT,0
+TE,23,Darren Waller,MIA,0
+TE,24,Mike Gesicki,CIN,0
+TE,25,Dalton Schultz,HOU,0
+TE,26,Chig Okonkwo,TEN,0
+TE,27,Juwan Johnson,NO,0
+TE,28,Pat Freiermuth,PIT,0
+TE,29,Tyler Higbee,LAR,0
+TE,30,Robbie Ouzts,SEA,0
+TE,31,Mason Taylor,NYJ,0
+TE,32,Theo Johnson,NYG,0
+TE,33,Elijah Arroyo,SEA,0
+TE,34,Will Dissly,LAC,0
+TE,35,Noah Fant,CIN,0
+TE,36,Ja'Tavion Sanders,CAR,0
+K,1,Brandon Aubrey,DAL,1
+K,2,Matt Gay,WAS,1
+K,3,Chase McLaughlin,TB,1
+K,4,Jake Elliott,PHI,1
+K,5,Jason Sanders,MIA,1
+K,6,Tyler Bass,BUFDTD,1
+K,7,Cameron Dicker,LAC,1
+K,8,Tyler Loop,BAL,1
+K,9,Evan McPherson,CIN,1
+K,10,Jake Bates,DET,1
+K,11,Ka'imi Fairbairn,HOU,1
+K,12,Harrison Butker,KC,1
+K,13,Brandon McManus,GB,0
+K,14,Younghoe Koo,ATL,0
+K,15,Chris Boswell,PIT,0
+K,16,Wil Lutz,DEN,0
+K,17,Joshua Karty,LAR,0
+K,18,Will Reichard,MIN,0
+K,19,Jake Moody,SF,0
+K,20,Chad Ryland,ARI,0
+K,21,Spencer Shrader,IND,0
+K,22,Daniel Carlson,LV,0
+K,23,Cam Little,JAC,0
+K,24,Jason Myers,SEA,0
+K,25,Cairo Santos,CHI,0
+K,26,Ryan Fitzgerald,CAR,0
+K,27,Nick Folk,NYJ,0
+K,28,Blake Grupe,NO,0

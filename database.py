@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from contextlib import contextmanager
 from pfr_scraper import PlayerInfo, PassingStats, RushingStats, ReceivingStats
+import csv
 
 logger = logging.getLogger(__name__)
 
@@ -351,10 +352,124 @@ class FootballDatabase:
             
             return stats
 
+    def import_draft_values(self, csv_file_path: str, season: int = 2025) -> int:
+        """
+        Import draft values from CSV file
+        
+        Args:
+            csv_file_path: Path to CSV file with columns: Position,Rank,Player,Team,Value
+            season: Season year for the draft values
+            
+        Returns:
+            Number of records imported
+        """
+        imported = 0
+        
+        with self.get_connection() as conn:
+            # Clear existing data for the season
+            conn.execute("DELETE FROM draft_values WHERE season = ?", (season,))
+            
+            with open(csv_file_path, 'r') as file:
+                reader = csv.DictReader(file)
+                position_ranks = {}  # Track position rankings
+                
+                for row in reader:
+                    position = row['Position']
+                    rank_overall = int(row['Rank']) if row['Rank'] else None
+                    player_name = row['Player']
+                    team = row['Team'] if row['Team'] else None
+                    value = int(row['Value']) if row['Value'] else 0
+                    
+                    # Calculate position rank
+                    if position not in position_ranks:
+                        position_ranks[position] = 0
+                    position_ranks[position] += 1
+                    rank_position = position_ranks[position]
+                    
+                    conn.execute("""
+                        INSERT INTO draft_values 
+                        (position, rank_overall, rank_position, player_name, team, draft_value, season)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (position, rank_overall, rank_position, player_name, team, value, season))
+                    
+                    imported += 1
+            
+            conn.commit()
+            
+        logger.info(f"Imported {imported} draft values for season {season}")
+        return imported
+
+    def get_draft_values(self, season: int = 2025, position: Optional[str] = None, 
+                        limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Get draft values from database
+        
+        Args:
+            season: Season year
+            position: Filter by position (e.g., 'QB', 'RB')
+            limit: Limit number of results
+            
+        Returns:
+            List of draft value dictionaries
+        """
+        query = """
+            SELECT * FROM draft_values 
+            WHERE season = ?
+        """
+        params = [season]
+        
+        if position:
+            query += " AND position = ?"
+            params.append(position)
+        
+        query += " ORDER BY rank_overall"
+        
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+        
+        with self.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def search_draft_values(self, search_term: str, season: int = 2025) -> List[Dict[str, Any]]:
+        """
+        Search draft values by player name
+        
+        Args:
+            search_term: Player name search term
+            season: Season year
+            
+        Returns:
+            List of matching draft value dictionaries
+        """
+        query = """
+            SELECT * FROM draft_values 
+            WHERE season = ? AND player_name LIKE ?
+            ORDER BY rank_overall
+        """
+        
+        with self.get_connection() as conn:
+            cursor = conn.execute(query, (season, f"%{search_term}%"))
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
 if __name__ == "__main__":
     # Test the database
     logging.basicConfig(level=logging.INFO)
     
     db = FootballDatabase()
+    
+    # Import draft values if CSV exists
+    csv_path = "draft_values.csv"
+    if Path(csv_path).exists():
+        imported = db.import_draft_values(csv_path)
+        print(f"Imported {imported} draft values")
+        
+        # Test search
+        qbs = db.get_draft_values(position="QB", limit=5)
+        print("Top 5 QBs:", [p['player_name'] for p in qbs])
+    
     stats = db.get_database_stats()
     print("Database stats:", stats)

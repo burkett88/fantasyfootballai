@@ -1,0 +1,1347 @@
+"""
+Fantasy Football Draft Assistant
+A comprehensive single-page application for draft day management
+"""
+
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for
+from database import FootballDatabase
+import logging
+from typing import Dict, List, Any, Optional
+import os
+from pathlib import Path
+import dspy
+from dotenv import load_dotenv
+import traceback
+import re
+from pfr_scraper import PFRScraper
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+
+# Initialize database
+db = FootballDatabase()
+
+# Configure DSPy for LLM analysis
+api_key = os.getenv("OPENAI_API_KEY")
+if api_key:
+    lm = dspy.LM("openai/gpt-4o-search-preview-2025-03-11", api_key=api_key, temperature=None)
+    dspy.configure(lm=lm)
+else:
+    logger.warning("No OpenAI API key found - LLM analysis will be disabled")
+
+# Define the DSPy signature for player analysis
+class FantasyFootballPlayerResearcher(dspy.Signature):
+    """This is a very detailed report for football players in the 2025 fantasy football season. This summarizes data from data-driven sources of fantasy football knowledge and not just mainstream sources like cbs."""
+    playerName: str = dspy.InputField(desc="Fantasy Football Player Name")
+    playing_time: str = dspy.OutputField(desc="Indications about how this players snap count may compare vs the previous season.")
+    injury_risk: str = dspy.OutputField(desc="Research on the injury risk for this player in 2025. Consider their injury history and usage.")
+    breakout_risk: str = dspy.OutputField(desc="Research on whether people expect this player to potentially breakout, which we define as a significant improvement to their per game points. Include direct quotes where appropriate.")
+    bust_risk: str = dspy.OutputField(desc="Research on whether this player could be a bust, particularly relative to where they are being drafted")
+    key_changes: str = dspy.OutputField(desc="Personnel changes or coaching changes on the team that may affect their playing time or effectiveness")
+    outlook: str = dspy.OutputField(desc="An overall assessment of their outlook")
+
+# Create the predictor if API key is available
+player_researcher = dspy.Predict(FantasyFootballPlayerResearcher) if api_key else None
+
+class DraftManager:
+    """Handles all draft-related operations"""
+    
+    def __init__(self, database: FootballDatabase):
+        self.db = database
+        
+    def get_all_players(self, season: int = 2025, status_filter: str = "all", position_filter: str = "all") -> List[Dict[str, Any]]:
+        """Get all players with their draft values and status"""
+        
+        # Base query joining draft values with status
+        query = """
+            SELECT 
+                dv.*,
+                COALESCE(dps.is_target, 0) as is_target,
+                COALESCE(dps.is_avoid, 0) as is_avoid,
+                COALESCE(dps.is_drafted, 0) as is_drafted,
+                COALESCE(dps.drafted_by, '') as drafted_by,
+                COALESCE(dps.drafted_price, 0) as drafted_price,
+                COALESCE(dps.has_injury_risk, 0) as has_injury_risk,
+                COALESCE(dps.has_breakout_potential, 0) as has_breakout_potential,
+                COALESCE(dps.custom_tags, '') as custom_tags,
+                COALESCE(dps.draft_notes, '') as draft_notes,
+                COALESCE(pa.analysis_text, '') as analysis_text,
+                COALESCE(pa.playing_time_score, 0) as playing_time_score,
+                COALESCE(pa.injury_risk_score, 0) as injury_risk_score,
+                COALESCE(pa.breakout_risk_score, 0) as breakout_risk_score,
+                COALESCE(pa.bust_risk_score, 0) as bust_risk_score
+            FROM draft_values dv
+            LEFT JOIN draft_player_status dps ON dv.player_name = dps.player_name AND dv.season = dps.season
+            LEFT JOIN player_analysis pa ON dv.player_name = pa.player_name AND dv.season = pa.season
+            WHERE dv.season = ?
+        """
+        
+        params = [season]
+        
+        # Apply status filter
+        if status_filter == "available":
+            query += " AND COALESCE(dps.is_drafted, 0) = 0"
+        elif status_filter == "drafted":
+            query += " AND COALESCE(dps.is_drafted, 0) = 1"
+        elif status_filter == "targets":
+            query += " AND COALESCE(dps.is_target, 0) = 1"
+        elif status_filter == "avoid":
+            query += " AND COALESCE(dps.is_avoid, 0) = 1"
+            
+        # Apply position filter
+        if position_filter != "all":
+            query += " AND dv.position = ?"
+            params.append(position_filter)
+            
+        query += " ORDER BY dv.rank_overall"
+        
+        with self.db.get_connection() as conn:
+            cursor = conn.execute(query, params)
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def search_players(self, search_term: str, season: int = 2025, status_filter: str = "all", position_filter: str = "all") -> List[Dict[str, Any]]:
+        """Search players by name"""
+        players = self.get_all_players(season, status_filter, position_filter)
+        search_lower = search_term.lower()
+        return [p for p in players if search_lower in p['player_name'].lower()]
+    
+    def update_player_status(self, player_name: str, status_updates: Dict[str, Any], season: int = 2025):
+        """Update player status flags"""
+        
+        with self.db.get_connection() as conn:
+            # Insert or update player status
+            conn.execute("""
+                INSERT OR REPLACE INTO draft_player_status 
+                (player_name, season, is_target, is_avoid, is_drafted, drafted_by, 
+                 drafted_price, has_injury_risk, has_breakout_potential, custom_tags, draft_notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                player_name, season,
+                status_updates.get('is_target', 0),
+                status_updates.get('is_avoid', 0), 
+                status_updates.get('is_drafted', 0),
+                status_updates.get('drafted_by', ''),
+                status_updates.get('drafted_price', 0),
+                status_updates.get('has_injury_risk', 0),
+                status_updates.get('has_breakout_potential', 0),
+                status_updates.get('custom_tags', ''),
+                status_updates.get('draft_notes', '')
+            ))
+            conn.commit()
+    
+    def get_teammates(self, player_name: str, season: int = 2025) -> List[Dict[str, Any]]:
+        """Get offensive teammates for a player"""
+        query = """
+            SELECT teammate_name, teammate_position 
+            FROM player_teammates 
+            WHERE player_name = ? AND season = ?
+            ORDER BY 
+                CASE teammate_position 
+                    WHEN 'QB' THEN 1
+                    WHEN 'RB' THEN 2  
+                    WHEN 'WR' THEN 3
+                    WHEN 'TE' THEN 4
+                    ELSE 5
+                END,
+                teammate_name
+        """
+        
+        with self.db.get_connection() as conn:
+            cursor = conn.execute(query, (player_name, season))
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    
+    def analyze_player_with_llm(self, player_name: str, season: int = 2025) -> Optional[Dict[str, Any]]:
+        """Generate LLM analysis for a player and store in database"""
+        if not player_researcher:
+            logger.warning("LLM analysis not available - no API key configured")
+            return None
+            
+        try:
+            # Check if analysis already exists
+            with self.db.get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT * FROM player_analysis WHERE player_name = ? AND season = ?",
+                    (player_name, season)
+                )
+                existing = cursor.fetchone()
+                
+                if existing:
+                    logger.info(f"Analysis already exists for {player_name}")
+                    return dict(existing)
+            
+            logger.info(f"Generating LLM analysis for {player_name}")
+            result = player_researcher(playerName=player_name)
+            
+            # Convert markdown links to HTML
+            def convert_markdown_links(text: str) -> str:
+                pattern = r'\[([^\]]+)\]\((https?://[^\)]+)\)'
+                replacement = r'<a href="\2" target="_blank" class="text-blue-600 hover:text-blue-800 underline">\1</a>'
+                return re.sub(pattern, replacement, text)
+            
+            # Combine all analysis into a single text field
+            analysis_parts = [
+                f"**Playing Time**: {result.playing_time}",
+                f"**Injury Risk**: {result.injury_risk}", 
+                f"**Breakout Risk**: {result.breakout_risk}",
+                f"**Bust Risk**: {result.bust_risk}",
+                f"**Key Changes**: {result.key_changes}",
+                f"**Outlook**: {result.outlook}"
+            ]
+            
+            analysis_text = convert_markdown_links("\n\n".join(analysis_parts))
+            
+            # Store in database
+            with self.db.get_connection() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO player_analysis 
+                    (player_name, season, analysis_text, key_changes, outlook)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (
+                    player_name, season, analysis_text,
+                    convert_markdown_links(result.key_changes),
+                    convert_markdown_links(result.outlook)
+                ))
+                conn.commit()
+            
+            logger.info(f"Stored LLM analysis for {player_name}")
+            
+            return {
+                'player_name': player_name,
+                'season': season,
+                'analysis_text': analysis_text,
+                'key_changes': convert_markdown_links(result.key_changes),
+                'outlook': convert_markdown_links(result.outlook)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing player {player_name}: {str(e)}")
+            traceback.print_exc()
+            return None
+    
+    def get_player_stats(self, player_name: str, seasons: Optional[List[int]] = None) -> Dict[str, Any]:
+        """Get player stats from the database using the existing method"""
+        if not seasons:
+            # Get last 3 seasons by default
+            current_year = 2024  # 2024 is the most recent complete season
+            seasons = [current_year - i for i in range(3)]
+        
+        return self.db.get_player_stats(player_name, seasons)
+    
+    def scrape_player_stats(self, player_name: str) -> bool:
+        """Scrape stats for a player from Pro Football Reference"""
+        try:
+            scraper = PFRScraper(delay=1.0)  # Be respectful with requests
+            
+            # Search for player and get their data
+            logger.info(f"Searching for {player_name} on Pro Football Reference...")
+            
+            # This is a simplified version - in reality you'd need to implement
+            # player search functionality in the scraper
+            # For now, return False to indicate not implemented
+            logger.warning("Player stats scraping not yet implemented - use collect_stats.py script")
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error scraping stats for {player_name}: {str(e)}")
+            return False
+
+# Initialize draft manager
+draft_manager = DraftManager(db)
+
+@app.route('/')
+def index():
+    """Main draft application page"""
+    return render_template_string(DRAFT_APP_HTML)
+
+@app.route('/api/players')
+def api_players():
+    """API endpoint for player data"""
+    status_filter = request.args.get('filter', 'all')
+    position_filter = request.args.get('position', 'all')
+    search_term = request.args.get('search', '')
+    
+    if search_term:
+        players = draft_manager.search_players(search_term, status_filter=status_filter, position_filter=position_filter)
+    else:
+        players = draft_manager.get_all_players(status_filter=status_filter, position_filter=position_filter)
+    
+    return jsonify(players)
+
+@app.route('/api/players/<player_name>/status', methods=['POST'])
+def update_player_status(player_name):
+    """Update player status"""
+    status_updates = request.get_json()
+    draft_manager.update_player_status(player_name, status_updates)
+    return jsonify({'success': True})
+
+@app.route('/api/players/<player_name>/teammates')
+def get_player_teammates(player_name):
+    """Get player teammates"""
+    teammates = draft_manager.get_teammates(player_name)
+    return jsonify(teammates)
+
+@app.route('/api/players/<player_name>')
+def get_player_detail(player_name):
+    """Get detailed player information including stats"""
+    players = draft_manager.search_players(player_name)
+    if players:
+        player = players[0]  # Get exact match or first result
+        teammates = draft_manager.get_teammates(player_name)
+        player['teammates'] = teammates
+        
+        # Get player stats from Pro Football Reference data
+        try:
+            stats_data = draft_manager.get_player_stats(player_name)
+            player['stats'] = stats_data
+            logger.info(f"Retrieved stats for {player_name}: {len(stats_data.get('passing_stats', []))} passing, {len(stats_data.get('rushing_stats', []))} rushing, {len(stats_data.get('receiving_stats', []))} receiving")
+        except Exception as e:
+            logger.warning(f"Could not retrieve stats for {player_name}: {str(e)}")
+            player['stats'] = {}
+        
+        return jsonify(player)
+    return jsonify({'error': 'Player not found'}), 404
+
+@app.route('/api/players/<player_name>/analyze', methods=['POST'])
+def analyze_player(player_name):
+    """Generate LLM analysis for a player"""
+    try:
+        analysis = draft_manager.analyze_player_with_llm(player_name)
+        if analysis:
+            return jsonify({'success': True, 'analysis': analysis})
+        else:
+            return jsonify({'success': False, 'error': 'Analysis failed or not available'}), 500
+    except Exception as e:
+        logger.error(f"Error in analyze_player endpoint: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# HTML Template with embedded CSS and JavaScript
+DRAFT_APP_HTML = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Football Draft Assistant</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f7;
+            color: #1d1d1f;
+            font-size: 14px;
+        }
+        
+        .header {
+            background: #1d1d1f;
+            color: white;
+            padding: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header h1 {
+            text-align: center;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        
+        .controls {
+            background: white;
+            padding: 1rem;
+            border-bottom: 1px solid #d2d2d7;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .search-box {
+            flex: 1;
+            min-width: 250px;
+            padding: 0.4rem;
+            border: 1px solid #d2d2d7;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+        
+        .filter-buttons {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+        
+        .filter-section {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .filter-label {
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: #6B7280;
+        }
+        
+        .filter-btn {
+            padding: 0.4rem 0.75rem;
+            border: 1px solid #d2d2d7;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.75rem;
+        }
+        
+        .filter-btn.active {
+            background: #007AFF;
+            color: white;
+            border-color: #007AFF;
+        }
+        
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 1rem;
+            padding: 1rem;
+            height: calc(100vh - 120px);
+        }
+        
+        @media (max-width: 1200px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: 40% 60%;
+            }
+        }
+        
+        .player-list {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .player-list-header {
+            padding: 0.75rem;
+            border-bottom: 1px solid #d2d2d7;
+            font-weight: 600;
+            background: #f8f8f8;
+            font-size: 0.875rem;
+        }
+        
+        .player-grid {
+            flex: 1;
+            overflow-y: auto;
+        }
+        
+        .player-row {
+            display: grid;
+            grid-template-columns: 40px 40px 1fr 50px 60px 100px;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            align-items: center;
+            font-size: 0.8rem;
+        }
+        
+        .player-row:hover {
+            background: #f8f8f8;
+        }
+        
+        .player-row.selected {
+            background: #007AFF1A;
+            border-left: 4px solid #007AFF;
+        }
+        
+        .player-row.drafted {
+            opacity: 0.5;
+            text-decoration: line-through;
+        }
+        
+        .player-row.target {
+            border-left: 4px solid #34C759;
+        }
+        
+        .player-row.avoid {
+            border-left: 4px solid #FF3B30;
+        }
+        
+        .rank {
+            font-weight: 600;
+            color: #8E8E93;
+        }
+        
+        .position {
+            font-size: 0.625rem;
+            background: #007AFF;
+            color: white;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .position.QB { background: #FF9500; }
+        .position.RB { background: #34C759; }
+        .position.WR { background: #007AFF; }
+        .position.TE { background: #5856D6; }
+        .position.DST { background: #8E8E93; }
+        .position.K { background: #FF2D92; }
+        
+        .player-name {
+            font-weight: 500;
+        }
+        
+        .player-team {
+            font-size: 0.625rem;
+            color: #8E8E93;
+            margin-left: 0.25rem;
+        }
+        
+        .value {
+            font-weight: 600;
+            color: #34C759;
+        }
+        
+        .indicators {
+            display: flex;
+            gap: 0.25rem;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 0.25rem;
+        }
+        
+        .action-btn {
+            padding: 0.2rem 0.4rem;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.625rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        
+        .btn-target {
+            background: #34C759;
+            color: white;
+        }
+        
+        .btn-avoid {
+            background: #FF3B30;
+            color: white;
+        }
+        
+        .btn-drafted {
+            background: #8E8E93;
+            color: white;
+        }
+        
+        .btn-analyze {
+            background: #007AFF;
+            color: white;
+            padding: 0.5rem 1rem;
+            margin-bottom: 1rem;
+            width: 100%;
+            font-size: 0.875rem;
+        }
+        
+        .btn-analyze:hover {
+            background: #0056CC;
+        }
+        
+        .btn-analyze:disabled {
+            background: #8E8E93;
+            cursor: not-allowed;
+        }
+        
+        .player-detail {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .detail-header {
+            padding: 0.75rem;
+            border-bottom: 1px solid #d2d2d7;
+            background: #f8f8f8;
+            font-size: 0.875rem;
+        }
+        
+        .detail-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.75rem;
+            font-size: 0.8rem;
+        }
+        
+        .empty-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #8E8E93;
+            font-style: italic;
+        }
+        
+        .teammates {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .teammate {
+            background: #f0f0f0;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+        
+        .analysis-section {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #d2d2d7;
+        }
+        
+        .section-title {
+            font-weight: 600;
+            margin-bottom: 0.4rem;
+            color: #1d1d1f;
+            font-size: 0.875rem;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #8E8E93;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.4rem;
+            margin: 0.4rem 0;
+        }
+        
+        .stat-item {
+            background: #f8f8f8;
+            padding: 0.4rem;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+        
+        .stat-label {
+            font-size: 0.65rem;
+            color: #8E8E93;
+            margin-top: 0.2rem;
+        }
+        
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0.75rem 0;
+            font-size: 0.75rem;
+        }
+        
+        .stats-table th,
+        .stats-table td {
+            padding: 0.3rem 0.2rem;
+            text-align: center;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .stats-table th {
+            background: #f8f8f8;
+            font-weight: 600;
+            color: #1d1d1f;
+            border-bottom: 2px solid #d2d2d7;
+        }
+        
+        .stats-table tr:hover {
+            background: #f8f8f8;
+        }
+        
+        .stats-table .season-col {
+            font-weight: 600;
+            color: #007AFF;
+        }
+        
+        .no-stats {
+            text-align: center;
+            color: #8E8E93;
+            font-style: italic;
+            padding: 2rem;
+        }
+        
+        .stats-table strong {
+            color: #007AFF;
+            font-weight: 700;
+        }
+        
+        .fantasy-points-header {
+            background: linear-gradient(135deg, #007AFF, #34C759);
+            color: white !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🏈 Fantasy Football Draft Assistant</h1>
+    </div>
+    
+    <div class="controls">
+        <input type="text" class="search-box" placeholder="Search players..." 
+               oninput="searchPlayers(this.value)">
+        
+        <div class="filter-section">
+            <span class="filter-label">Status:</span>
+            <div class="filter-buttons" id="status-filters">
+                <button class="filter-btn active" onclick="filterPlayers('all')">All</button>
+                <button class="filter-btn" onclick="filterPlayers('available')">Available</button>
+                <button class="filter-btn" onclick="filterPlayers('targets')">Targets</button>
+                <button class="filter-btn" onclick="filterPlayers('avoid')">Avoid</button>
+                <button class="filter-btn" onclick="filterPlayers('drafted')">Drafted</button>
+            </div>
+        </div>
+        
+        <div class="filter-section">
+            <span class="filter-label">Position:</span>
+            <div class="filter-buttons" id="position-filters">
+                <button class="filter-btn active" onclick="filterByPosition('all')">All</button>
+                <button class="filter-btn" onclick="filterByPosition('QB')">QB</button>
+                <button class="filter-btn" onclick="filterByPosition('RB')">RB</button>
+                <button class="filter-btn" onclick="filterByPosition('WR')">WR</button>
+                <button class="filter-btn" onclick="filterByPosition('TE')">TE</button>
+                <button class="filter-btn" onclick="filterByPosition('DST')">DST</button>
+                <button class="filter-btn" onclick="filterByPosition('K')">K</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="player-list">
+            <div class="player-list-header">
+                Players
+            </div>
+            <div class="player-grid" id="player-grid">
+                <div class="loading">Loading players...</div>
+            </div>
+        </div>
+        
+        <div class="player-detail">
+            <div class="detail-header">
+                <strong id="detail-title">Player Details</strong>
+            </div>
+            <div class="detail-content" id="detail-content">
+                <div class="empty-state">
+                    Select a player to view details
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentFilter = 'all';
+        let currentPosition = 'all';
+        let currentSearch = '';
+        let selectedPlayer = null;
+        let players = [];
+        
+        // Load players on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadPlayers();
+        });
+        
+        async function loadPlayers(filter = 'all', position = 'all', search = '') {
+            try {
+                const url = new URL('/api/players', window.location.origin);
+                if (filter !== 'all') url.searchParams.append('filter', filter);
+                if (position !== 'all') url.searchParams.append('position', position);
+                if (search) url.searchParams.append('search', search);
+                
+                const response = await fetch(url);
+                players = await response.json();
+                renderPlayerList(players);
+            } catch (error) {
+                console.error('Error loading players:', error);
+                document.getElementById('player-grid').innerHTML = 
+                    '<div class="loading">Error loading players</div>';
+            }
+        }
+        
+        function renderPlayerList(playerList) {
+            const grid = document.getElementById('player-grid');
+            
+            if (playerList.length === 0) {
+                grid.innerHTML = '<div class="loading">No players found</div>';
+                return;
+            }
+            
+            grid.innerHTML = playerList.map(player => `
+                <div class="player-row ${getPlayerClasses(player)}" 
+                     onclick="selectPlayer('${player.player_name}', this)">
+                    <div class="rank">${player.rank_overall}</div>
+                    <div class="position ${player.position}">${player.position}</div>
+                    <div>
+                        <span class="player-name">${player.player_name}</span>
+                        <span class="player-team">${player.team || ''}</span>
+                    </div>
+                    <div class="value">$${player.draft_value}</div>
+                    <div class="indicators">
+                        ${player.has_injury_risk ? '🚑' : ''}
+                        ${player.has_breakout_potential ? '💥' : ''}
+                    </div>
+                    <div class="actions" onclick="event.stopPropagation()">
+                        <button class="action-btn btn-target" 
+                                onclick="toggleStatus('${player.player_name}', 'target')">
+                            ${player.is_target ? '✓' : 'T'}
+                        </button>
+                        <button class="action-btn btn-avoid" 
+                                onclick="toggleStatus('${player.player_name}', 'avoid')">
+                            ${player.is_avoid ? '✓' : 'A'}
+                        </button>
+                        <button class="action-btn btn-drafted" 
+                                onclick="toggleStatus('${player.player_name}', 'drafted')">
+                            ${player.is_drafted ? '✓' : 'D'}
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function getPlayerClasses(player) {
+            let classes = [];
+            if (selectedPlayer === player.player_name) classes.push('selected');
+            if (player.is_drafted) classes.push('drafted');
+            else if (player.is_target) classes.push('target');
+            else if (player.is_avoid) classes.push('avoid');
+            return classes.join(' ');
+        }
+        
+        async function selectPlayer(playerName, clickedElement = null) {
+            selectedPlayer = playerName;
+            
+            // Update visual selection
+            document.querySelectorAll('.player-row').forEach(row => {
+                row.classList.remove('selected');
+            });
+            
+            // Add selected class to the clicked element or find it by player name
+            if (clickedElement) {
+                clickedElement.classList.add('selected');
+            } else {
+                // Find the player row and select it
+                document.querySelectorAll('.player-row').forEach(row => {
+                    if (row.textContent.includes(playerName)) {
+                        row.classList.add('selected');
+                    }
+                });
+            }
+            
+            // Load player details
+            try {
+                const response = await fetch(`/api/players/${encodeURIComponent(playerName)}`);
+                const player = await response.json();
+                console.log('Player details loaded:', player);
+                
+                if (player.error) {
+                    document.getElementById('detail-content').innerHTML = 
+                        `<div class="empty-state">${player.error}</div>`;
+                    return;
+                }
+                
+                renderPlayerDetail(player);
+            } catch (error) {
+                console.error('Error loading player details:', error);
+                document.getElementById('detail-content').innerHTML = 
+                    `<div class="empty-state">Error loading player details</div>`;
+            }
+        }
+        
+        function renderPlayerDetail(player) {
+            document.getElementById('detail-title').textContent = 
+                `${player.player_name} (${player.position} - ${player.team || 'FA'})`;
+                
+            const content = `
+                <button class="action-btn btn-analyze" onclick="analyzePlayer('${player.player_name}')" id="analyze-btn">
+                    🤖 Generate AI Analysis
+                </button>
+                
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value">${player.rank_overall}</div>
+                        <div class="stat-label">Overall Rank</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">$${player.draft_value}</div>
+                        <div class="stat-label">Draft Value</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">${player.rank_position}</div>
+                        <div class="stat-label">${player.position} Rank</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value">
+                            ${player.has_injury_risk ? '🚑' : '✅'} 
+                            ${player.has_breakout_potential ? '💥' : ''}
+                        </div>
+                        <div class="stat-label">Risk Indicators</div>
+                    </div>
+                </div>
+                
+                ${player.teammates && player.teammates.length > 0 ? `
+                    <div class="analysis-section">
+                        <div class="section-title">Offensive Teammates</div>
+                        <div class="teammates">
+                            ${player.teammates.map(t => 
+                                `<span class="teammate">${t.teammate_name} (${t.teammate_position})</span>`
+                            ).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                
+                ${player.stats ? renderPlayerStats(player.stats) : ''}
+                
+                ${player.analysis_text ? `
+                    <div class="analysis-section">
+                        <div class="section-title">🤖 AI Player Analysis</div>
+                        <div class="analysis-text" style="white-space: pre-wrap; line-height: 1.6;">${player.analysis_text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>
+                        
+                        ${player.playing_time_score || player.injury_risk_score || player.breakout_risk_score || player.bust_risk_score ? `
+                            <div class="stats-grid" style="margin-top: 1rem;">
+                                ${player.playing_time_score ? `
+                                    <div class="stat-item">
+                                        <div class="stat-value">${player.playing_time_score}</div>
+                                        <div class="stat-label">Playing Time</div>
+                                    </div>
+                                ` : ''}
+                                ${player.injury_risk_score ? `
+                                    <div class="stat-item">
+                                        <div class="stat-value">${player.injury_risk_score}</div>
+                                        <div class="stat-label">Injury Risk</div>
+                                    </div>
+                                ` : ''}
+                                ${player.breakout_risk_score ? `
+                                    <div class="stat-item">
+                                        <div class="stat-value">${player.breakout_risk_score}</div>
+                                        <div class="stat-label">Breakout Risk</div>
+                                    </div>
+                                ` : ''}
+                                ${player.bust_risk_score ? `
+                                    <div class="stat-item">
+                                        <div class="stat-value">${player.bust_risk_score}</div>
+                                        <div class="stat-label">Bust Risk</div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : `
+                    <div class="analysis-section">
+                        <div class="section-title">🤖 AI Player Analysis</div>
+                        <div style="color: #8E8E93; font-style: italic; text-align: center; padding: 2rem;">
+                            Click "Generate AI Analysis" to get detailed insights about this player's 2025 fantasy outlook.
+                        </div>
+                    </div>
+                `}
+                
+                ${player.draft_notes ? `
+                    <div class="analysis-section">
+                        <div class="section-title">Draft Notes</div>
+                        <div>${player.draft_notes}</div>
+                    </div>
+                ` : ''}
+            `;
+            
+            document.getElementById('detail-content').innerHTML = content;
+        }
+        
+        async function toggleStatus(playerName, statusType) {
+            const player = players.find(p => p.player_name === playerName);
+            if (!player) return;
+            
+            const updates = {
+                is_target: statusType === 'target' ? !player.is_target : player.is_target,
+                is_avoid: statusType === 'avoid' ? !player.is_avoid : player.is_avoid,
+                is_drafted: statusType === 'drafted' ? !player.is_drafted : player.is_drafted,
+                has_injury_risk: player.has_injury_risk,
+                has_breakout_potential: player.has_breakout_potential
+            };
+            
+            // If marking as drafted, prompt for details
+            if (statusType === 'drafted' && !player.is_drafted) {
+                const draftedBy = prompt('Drafted by (optional):') || '';
+                const draftedPrice = prompt('Draft price (optional):') || 0;
+                updates.drafted_by = draftedBy;
+                updates.drafted_price = parseInt(draftedPrice) || 0;
+            }
+            
+            try {
+                const response = await fetch(`/api/players/${encodeURIComponent(playerName)}/status`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates)
+                });
+                
+                if (response.ok) {
+                    // Update local data
+                    Object.assign(player, updates);
+                    renderPlayerList(players);
+                    
+                    // Update detail view if this player is selected
+                    if (selectedPlayer === playerName) {
+                        renderPlayerDetail(player);
+                    }
+                }
+            } catch (error) {
+                console.error('Error updating player status:', error);
+            }
+        }
+        
+        function filterPlayers(filter) {
+            currentFilter = filter;
+            
+            // Update button states for status filters only
+            document.querySelectorAll('#status-filters .filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            loadPlayers(filter, currentPosition, currentSearch);
+        }
+        
+        function filterByPosition(position) {
+            currentPosition = position;
+            
+            // Update button states for position filters only
+            document.querySelectorAll('#position-filters .filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            loadPlayers(currentFilter, position, currentSearch);
+        }
+        
+        function searchPlayers(searchTerm) {
+            currentSearch = searchTerm;
+            loadPlayers(currentFilter, currentPosition, searchTerm);
+        }
+        
+        function calculateFantasyPoints(passingStats, rushingStats, receivingStats) {
+            // Half-PPR Scoring System:
+            // Passing: 1 pt per 25 yards, 4 pts per TD, -2 pts per INT
+            // Rushing: 1 pt per 10 yards, 6 pts per TD, -2 pts per fumble lost
+            // Receiving: 1 pt per 10 yards, 6 pts per TD, 0.5 pts per reception, -2 pts per fumble lost
+            
+            let points = 0;
+            
+            // Passing points
+            if (passingStats) {
+                points += (passingStats.passing_yards || 0) / 25; // 1 pt per 25 yards
+                points += (passingStats.passing_tds || 0) * 4; // 4 pts per TD
+                points -= (passingStats.interceptions || 0) * 2; // -2 pts per INT
+            }
+            
+            // Rushing points  
+            if (rushingStats) {
+                points += (rushingStats.rushing_yards || 0) / 10; // 1 pt per 10 yards
+                points += (rushingStats.rushing_tds || 0) * 6; // 6 pts per TD
+                points -= (rushingStats.fumbles_lost || 0) * 2; // -2 pts per fumble lost
+            }
+            
+            // Receiving points
+            if (receivingStats) {
+                points += (receivingStats.receiving_yards || 0) / 10; // 1 pt per 10 yards
+                points += (receivingStats.receiving_tds || 0) * 6; // 6 pts per TD
+                points += (receivingStats.receptions || 0) * 0.5; // 0.5 pts per reception (half-PPR)
+                points -= (receivingStats.fumbles_lost || 0) * 2; // -2 pts per fumble lost
+            }
+            
+            return points;
+        }
+        
+        function renderPlayerStats(stats) {
+            if (!stats || (!stats.passing_stats?.length && !stats.rushing_stats?.length && !stats.receiving_stats?.length)) {
+                return `
+                    <div class="analysis-section">
+                        <div class="section-title">📊 Player Statistics</div>
+                        <div class="no-stats">No historical statistics available in database</div>
+                    </div>
+                `;
+            }
+            
+            let statsHtml = '<div class="analysis-section"><div class="section-title">📊 Player Statistics</div>';
+            
+            // Passing Stats
+            if (stats.passing_stats && stats.passing_stats.length > 0) {
+                statsHtml += `
+                    <div style="margin-bottom: 2rem;">
+                        <h4 style="margin: 0.75rem 0 0.4rem 0; color: #1d1d1f; font-size: 0.8rem;">Passing Statistics</h4>
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Team</th>
+                                    <th>G</th>
+                                    <th>Comp</th>
+                                    <th>Att</th>
+                                    <th>Comp%</th>
+                                    <th>Yds</th>
+                                    <th>TD</th>
+                                    <th>INT</th>
+                                    <th>QBR</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${stats.passing_stats.map(stat => `
+                                    <tr>
+                                        <td class="season-col">${stat.season}</td>
+                                        <td>${stat.team_abbr || ''}</td>
+                                        <td>${stat.games || 0}</td>
+                                        <td>${stat.completions || 0}</td>
+                                        <td>${stat.attempts || 0}</td>
+                                        <td>${stat.completion_pct ? stat.completion_pct.toFixed(1) + '%' : '-'}</td>
+                                        <td>${stat.passing_yards || 0}</td>
+                                        <td>${stat.passing_tds || 0}</td>
+                                        <td>${stat.interceptions || 0}</td>
+                                        <td>${stat.quarterback_rating ? stat.quarterback_rating.toFixed(1) : '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            // Rushing Stats
+            if (stats.rushing_stats && stats.rushing_stats.length > 0) {
+                statsHtml += `
+                    <div style="margin-bottom: 2rem;">
+                        <h4 style="margin: 0.75rem 0 0.4rem 0; color: #1d1d1f; font-size: 0.8rem;">Rushing Statistics</h4>
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Team</th>
+                                    <th>G</th>
+                                    <th>Att</th>
+                                    <th>Yds</th>
+                                    <th>Y/A</th>
+                                    <th>TD</th>
+                                    <th>Long</th>
+                                    <th>Fum</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${stats.rushing_stats.map(stat => `
+                                    <tr>
+                                        <td class="season-col">${stat.season}</td>
+                                        <td>${stat.team_abbr || ''}</td>
+                                        <td>${stat.games || 0}</td>
+                                        <td>${stat.rushing_attempts || 0}</td>
+                                        <td>${stat.rushing_yards || 0}</td>
+                                        <td>${stat.yards_per_attempt ? stat.yards_per_attempt.toFixed(1) : '-'}</td>
+                                        <td>${stat.rushing_tds || 0}</td>
+                                        <td>${stat.longest_rush || '-'}</td>
+                                        <td>${stat.fumbles || 0}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            // Receiving Stats
+            if (stats.receiving_stats && stats.receiving_stats.length > 0) {
+                statsHtml += `
+                    <div style="margin-bottom: 2rem;">
+                        <h4 style="margin: 0.75rem 0 0.4rem 0; color: #1d1d1f; font-size: 0.8rem;">Receiving Statistics</h4>
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Team</th>
+                                    <th>G</th>
+                                    <th>Tgt</th>
+                                    <th>Rec</th>
+                                    <th>Yds</th>
+                                    <th>Y/R</th>
+                                    <th>TD</th>
+                                    <th>Long</th>
+                                    <th>Catch%</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${stats.receiving_stats.map(stat => `
+                                    <tr>
+                                        <td class="season-col">${stat.season}</td>
+                                        <td>${stat.team_abbr || ''}</td>
+                                        <td>${stat.games || 0}</td>
+                                        <td>${stat.targets || 0}</td>
+                                        <td>${stat.receptions || 0}</td>
+                                        <td>${stat.receiving_yards || 0}</td>
+                                        <td>${stat.yards_per_reception ? stat.yards_per_reception.toFixed(1) : '-'}</td>
+                                        <td>${stat.receiving_tds || 0}</td>
+                                        <td>${stat.longest_reception || '-'}</td>
+                                        <td>${stat.catch_pct ? stat.catch_pct.toFixed(1) + '%' : '-'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            }
+            
+            // Fantasy Points Summary
+            const fantasyPointsByYear = {};
+            
+            // Combine all stats by season to calculate fantasy points
+            const allSeasons = new Set();
+            
+            if (stats.passing_stats) stats.passing_stats.forEach(stat => allSeasons.add(stat.season));
+            if (stats.rushing_stats) stats.rushing_stats.forEach(stat => allSeasons.add(stat.season));
+            if (stats.receiving_stats) stats.receiving_stats.forEach(stat => allSeasons.add(stat.season));
+            
+            [...allSeasons].sort((a, b) => b - a).forEach(season => {
+                const passingData = stats.passing_stats?.find(s => s.season === season);
+                const rushingData = stats.rushing_stats?.find(s => s.season === season);
+                const receivingData = stats.receiving_stats?.find(s => s.season === season);
+                
+                const fantasyPoints = calculateFantasyPoints(passingData, rushingData, receivingData);
+                const games = passingData?.games || rushingData?.games || receivingData?.games || 0;
+                const ppg = games > 0 ? fantasyPoints / games : 0;
+                
+                fantasyPointsByYear[season] = {
+                    total: fantasyPoints,
+                    games: games,
+                    ppg: ppg,
+                    team: passingData?.team_abbr || rushingData?.team_abbr || receivingData?.team_abbr || ''
+                };
+            });
+            
+            if (Object.keys(fantasyPointsByYear).length > 0) {
+                statsHtml += `
+                    <div style="margin-bottom: 2rem;">
+                        <h4 style="margin: 0.75rem 0 0.4rem 0; color: #1d1d1f; font-size: 0.8rem;">🏆 Fantasy Points (Half-PPR)</h4>
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Team</th>
+                                    <th>Games</th>
+                                    <th>Total Pts</th>
+                                    <th>PPG</th>
+                                    <th>16-Game Pace</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${Object.entries(fantasyPointsByYear)
+                                    .sort(([a], [b]) => b - a)
+                                    .map(([season, data]) => `
+                                    <tr>
+                                        <td class="season-col">${season}</td>
+                                        <td>${data.team}</td>
+                                        <td>${data.games}</td>
+                                        <td><strong>${data.total.toFixed(1)}</strong></td>
+                                        <td><strong>${data.ppg.toFixed(1)}</strong></td>
+                                        <td>${(data.ppg * 16).toFixed(1)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        <div style="font-size: 0.65rem; color: #8E8E93; margin-top: 0.4rem;">
+                            * Half-PPR: Pass TD=4, Rush/Rec TD=6, 25 pass yds=1, 10 rush/rec yds=1, Reception=0.5, INT/Fumble=-2
+                        </div>
+                    </div>
+                `;
+            }
+            
+            statsHtml += '</div>';
+            return statsHtml;
+        }
+        
+        async function analyzePlayer(playerName) {
+            const analyzeBtn = document.getElementById('analyze-btn');
+            if (!analyzeBtn) return;
+            
+            // Disable button and show loading state
+            analyzeBtn.disabled = true;
+            analyzeBtn.textContent = '🔄 Generating Analysis...';
+            
+            try {
+                const response = await fetch(`/api/players/${encodeURIComponent(playerName)}/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                console.log('Analysis result:', result);
+                
+                if (result.success) {
+                    // Refresh player details to show new analysis
+                    await selectPlayer(playerName);
+                    
+                    // Show success message briefly
+                    analyzeBtn.textContent = '✅ Analysis Complete';
+                    setTimeout(() => {
+                        analyzeBtn.textContent = '🤖 Generate AI Analysis';
+                        analyzeBtn.disabled = false;
+                    }, 2000);
+                } else {
+                    analyzeBtn.textContent = '❌ Analysis Failed';
+                    setTimeout(() => {
+                        analyzeBtn.textContent = '🤖 Generate AI Analysis';
+                        analyzeBtn.disabled = false;
+                    }, 3000);
+                    console.error('Analysis failed:', result.error);
+                }
+            } catch (error) {
+                analyzeBtn.textContent = '❌ Error';
+                setTimeout(() => {
+                    analyzeBtn.textContent = '🤖 Generate AI Analysis';
+                    analyzeBtn.disabled = false;
+                }, 3000);
+                console.error('Error analyzing player:', error);
+            }
+        }
+    </script>
+</body>
+</html>
+'''
+
+if __name__ == '__main__':
+    # Ensure database is initialized with draft values
+    csv_path = Path('draft_values.csv')
+    if csv_path.exists():
+        logger.info("Importing draft values...")
+        imported = db.import_draft_values(str(csv_path))
+        logger.info(f"Imported {imported} draft values")
+    
+    app.run(debug=True, host='0.0.0.0', port=5001)

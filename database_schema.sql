@@ -101,6 +101,67 @@ CREATE TABLE receiving_stats (
     UNIQUE(player_id, season, team_id)
 );
 
+-- Draft values table - stores fantasy draft values and rankings
+CREATE TABLE draft_values (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position VARCHAR(5) NOT NULL,
+    rank_overall INTEGER NOT NULL,
+    rank_position INTEGER,
+    player_name VARCHAR(100) NOT NULL,
+    team VARCHAR(5),
+    draft_value INTEGER NOT NULL DEFAULT 0,
+    season INTEGER DEFAULT 2025,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Draft player status table - stores user-specific draft status and preferences
+CREATE TABLE draft_player_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_name VARCHAR(100) NOT NULL,
+    season INTEGER DEFAULT 2025,
+    is_target BOOLEAN DEFAULT FALSE,
+    is_avoid BOOLEAN DEFAULT FALSE,
+    is_drafted BOOLEAN DEFAULT FALSE,
+    drafted_by VARCHAR(100),
+    drafted_price INTEGER,
+    has_injury_risk BOOLEAN DEFAULT FALSE,
+    has_breakout_potential BOOLEAN DEFAULT FALSE,
+    custom_tags TEXT,
+    draft_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(player_name, season)
+);
+
+-- Player analysis table - stores LLM-generated analysis for each player  
+CREATE TABLE player_analysis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_name VARCHAR(100) NOT NULL,
+    season INTEGER DEFAULT 2025,
+    analysis_text TEXT NOT NULL,
+    playing_time_score INTEGER,      -- -5 to 5 scale
+    injury_risk_score INTEGER,       -- 0 to 5 scale  
+    breakout_risk_score INTEGER,     -- 0 to 5 scale
+    bust_risk_score INTEGER,         -- 0 to 5 scale
+    key_changes TEXT,
+    outlook TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(player_name, season)
+);
+
+-- Player teammates table - maps offensive teammates for context
+CREATE TABLE player_teammates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    player_name VARCHAR(100) NOT NULL,
+    teammate_name VARCHAR(100) NOT NULL,
+    teammate_position VARCHAR(5) NOT NULL,
+    season INTEGER DEFAULT 2025,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(player_name, teammate_name, season)
+);
+
 -- Indexes for better query performance
 CREATE INDEX idx_players_pfr_id ON players(pfr_id);
 CREATE INDEX idx_players_name ON players(name);
@@ -114,6 +175,22 @@ CREATE INDEX idx_rushing_season ON rushing_stats(season);
 
 CREATE INDEX idx_receiving_player_season ON receiving_stats(player_id, season);
 CREATE INDEX idx_receiving_season ON receiving_stats(season);
+
+CREATE INDEX idx_draft_values_position ON draft_values(position);
+CREATE INDEX idx_draft_values_player ON draft_values(player_name);
+CREATE INDEX idx_draft_values_rank ON draft_values(rank_overall);
+CREATE INDEX idx_draft_values_season ON draft_values(season);
+
+CREATE INDEX idx_draft_status_player ON draft_player_status(player_name);
+CREATE INDEX idx_draft_status_season ON draft_player_status(season);
+CREATE INDEX idx_draft_status_target ON draft_player_status(is_target);
+CREATE INDEX idx_draft_status_drafted ON draft_player_status(is_drafted);
+
+CREATE INDEX idx_analysis_player ON player_analysis(player_name);
+CREATE INDEX idx_analysis_season ON player_analysis(season);
+
+CREATE INDEX idx_teammates_player ON player_teammates(player_name);
+CREATE INDEX idx_teammates_season ON player_teammates(season);
 
 -- Insert common NFL teams (ignore if already exists)
 INSERT OR IGNORE INTO teams (abbreviation, name, city) VALUES
