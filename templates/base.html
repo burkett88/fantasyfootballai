@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Fantasy Football AI{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@2.0.0"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'nfl-blue': '#003594',
+                        'nfl-red': '#CC162C',
+                        'fantasy-green': '#10B981',
+                        'fantasy-orange': '#F59E0B',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .card-shadow {
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        
+        .metric-card {
+            transition: all 0.3s ease;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 25px 30px -5px rgba(0, 0, 0, 0.15), 0 15px 15px -5px rgba(0, 0, 0, 0.08);
+        }
+        
+        .loading-spinner {
+            border-top-color: #667eea;
+            animation: spinner 1s ease-in-out infinite;
+        }
+        
+        @keyframes spinner {
+            to { transform: rotate(360deg); }
+        }
+        
+        .htmx-indicator {
+            display: none;
+        }
+        
+        .htmx-request .htmx-indicator {
+            display: flex !important;
+        }
+        
+        .htmx-request.htmx-indicator {
+            display: flex !important;
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <nav class="gradient-bg text-white p-4 shadow-lg">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <h1 class="text-2xl font-bold">
+                <a href="/" class="hover:text-gray-200 transition-colors">🏈 Fantasy Football AI</a>
+            </h1>
+            <div class="text-sm opacity-90">
+                Powered by GPT-4 & DSPy
+            </div>
+        </div>
+    </nav>
+    
+    <main class="max-w-6xl mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+    </main>
+    
+    <footer class="bg-gray-800 text-white p-6 mt-16">
+        <div class="max-w-6xl mx-auto text-center">
+            <p class="text-sm opacity-75">
+                Fantasy Football AI - Data-driven player analysis for the 2025 season
+            </p>
+        </div>
+    </footer>
+</body>
+</html>

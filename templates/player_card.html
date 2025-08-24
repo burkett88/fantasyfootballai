@@ -1,0 +1,115 @@
+{% macro metric_card(title, value, description) %}
+<div class="bg-gray-50 rounded-lg p-4 text-center">
+    <h3 class="font-medium text-gray-700 text-sm mb-1">{{ title }}</h3>
+    <div class="text-lg font-semibold text-gray-900 mb-1">{{ value }}</div>
+    <p class="text-xs text-gray-500">{{ description }}</p>
+</div>
+{% endmacro %}
+
+<div class="fade-in">
+    <div class="text-center mb-6">
+        <button 
+            onclick="window.location.href='/'"
+            class="text-gray-600 hover:text-gray-800 text-sm mb-3 inline-flex items-center"
+        >
+            ← Analyze Another Player
+        </button>
+        <h1 class="text-2xl font-bold text-gray-900 mb-1">{{ analysis.playerName }}</h1>
+        <p class="text-gray-500 text-sm">2025 Fantasy Football Analysis</p>
+    </div>
+
+    <!-- Player Analysis Card -->
+    <div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
+        <!-- All Sections Full Width -->
+        <div class="space-y-4">
+            <div>
+                <h3 class="text-base font-medium text-gray-800 mb-2">Playing Time</h3>
+                <div class="bg-gray-50 rounded p-3">
+                    <p class="text-sm text-gray-700 leading-relaxed">{{ analysis.playing_time|safe }}</p>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-base font-medium text-gray-800 mb-2">Injury Risk</h3>
+                <div class="bg-gray-50 rounded p-3">
+                    <p class="text-sm text-gray-700 leading-relaxed">{{ analysis.injury_risk|safe }}</p>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-base font-medium text-gray-800 mb-2">Breakout Risk</h3>
+                <div class="bg-gray-50 rounded p-3">
+                    <p class="text-sm text-gray-700 leading-relaxed">{{ analysis.breakout_risk|safe }}</p>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-base font-medium text-gray-800 mb-2">Bust Risk</h3>
+                <div class="bg-gray-50 rounded p-3">
+                    <p class="text-sm text-gray-700 leading-relaxed">{{ analysis.bust_risk|safe }}</p>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-base font-medium text-gray-800 mb-2">Key Changes</h3>
+                <div class="bg-gray-50 rounded p-3">
+                    <p class="text-sm text-gray-700 leading-relaxed">{{ analysis.key_changes|safe }}</p>
+                </div>
+            </div>
+            
+            <div>
+                <h3 class="text-base font-medium text-gray-800 mb-2">2025 Outlook</h3>
+                <div class="bg-gray-50 rounded p-3">
+                    <p class="text-sm text-gray-700 leading-relaxed">{{ analysis.outlook|safe }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="text-center space-x-3">
+        <button 
+            onclick="window.print()" 
+            class="bg-gray-500 hover:bg-gray-600 text-white text-sm py-2 px-4 rounded transition-colors"
+        >
+            Print
+        </button>
+        
+        <button 
+            onclick="shareAnalysis()" 
+            class="bg-blue-500 hover:bg-blue-600 text-white text-sm py-2 px-4 rounded transition-colors"
+        >
+            Share
+        </button>
+    </div>
+</div>
+
+<script>
+function shareAnalysis() {
+    if (navigator.share) {
+        navigator.share({
+            title: 'Fantasy Football Analysis: {{ analysis.playerName }}',
+            text: '{{ analysis.playerName }} 2025 Fantasy Football Analysis',
+            url: window.location.href
+        }).catch(console.error);
+    } else {
+        // Fallback: copy URL to clipboard
+        navigator.clipboard.writeText(window.location.href).then(function() {
+            alert('Analysis URL copied to clipboard!');
+        }).catch(function() {
+            alert('Unable to share. Please copy the URL manually.');
+        });
+    }
+}
+
+// Links are now converted server-side
+</script>
+
+<style>
+@media print {
+    body { background: white !important; }
+    .gradient-bg { background: #003594 !important; }
+    button { display: none !important; }
+    .card-shadow { box-shadow: none !important; border: 1px solid #e5e7eb; }
+}
+</style>
