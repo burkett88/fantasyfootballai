@@ -236,19 +236,170 @@ class DraftManager:
         
         return self.db.get_player_stats(player_name, seasons)
     
-    def scrape_player_stats(self, player_name: str) -> bool:
-        """Scrape stats for a player from Pro Football Reference"""
+    def scrape_and_store_player_stats(self, player_name: str) -> bool:
+        """Scrape stats for a player from Pro Football Reference and store in database"""
         try:
             scraper = PFRScraper(delay=1.0)  # Be respectful with requests
             
-            # Search for player and get their data
             logger.info(f"Searching for {player_name} on Pro Football Reference...")
             
-            # This is a simplified version - in reality you'd need to implement
-            # player search functionality in the scraper
-            # For now, return False to indicate not implemented
-            logger.warning("Player stats scraping not yet implemented - use collect_stats.py script")
-            return False
+            # Search for player
+            pfr_ids = scraper.search_player(player_name)
+            if not pfr_ids:
+                logger.warning(f"No Pro Football Reference results found for {player_name}")
+                return False
+            
+            # Try each ID to find the one with the most relevant stats (for active players)
+            best_pfr_id = None
+            best_stats_count = 0
+            best_latest_season = 0
+            
+            for pfr_id in pfr_ids:
+                try:
+                    test_passing, test_rushing, test_receiving = scraper.get_player_stats(pfr_id)
+                    total_stats = len(test_passing) + len(test_rushing) + len(test_receiving)
+                    
+                    # Find the most recent season
+                    latest_season = 0
+                    for stats_list in [test_passing, test_rushing, test_receiving]:
+                        if stats_list:
+                            latest_season = max(latest_season, max(stat.season for stat in stats_list))
+                    
+                    # Prefer players with more recent stats and more total stats
+                    if (latest_season > best_latest_season or 
+                        (latest_season == best_latest_season and total_stats > best_stats_count)):
+                        best_pfr_id = pfr_id
+                        best_stats_count = total_stats
+                        best_latest_season = latest_season
+                        
+                        logger.info(f"Found better match: {pfr_id} with {total_stats} stats, latest season {latest_season}")
+                        
+                except Exception as e:
+                    logger.warning(f"Error checking stats for {pfr_id}: {str(e)}")
+                    continue
+            
+            if not best_pfr_id:
+                logger.warning(f"No valid stats found for any {player_name} variants")
+                return False
+                
+            pfr_id = best_pfr_id
+            logger.info(f"Using PFR ID: {pfr_id} for {player_name} (latest season: {best_latest_season})")
+            
+            # Get player info and stats for the best match
+            player_info = scraper.get_player_info(pfr_id)
+            passing_stats, rushing_stats, receiving_stats = scraper.get_player_stats(pfr_id)
+            
+            if not (passing_stats or rushing_stats or receiving_stats):
+                logger.warning(f"No stats retrieved for {player_name} with ID {pfr_id}")
+                return False
+            
+            # Store player info if we got any
+            if player_info:
+                with self.db.get_connection() as conn:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO players 
+                        (pfr_id, name, position, height, weight, birth_date, college, drafted_year, drafted_round, drafted_pick)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        player_info.pfr_id, player_info.name or player_name, player_info.position,
+                        player_info.height, player_info.weight, player_info.birth_date,
+                        player_info.college, player_info.drafted_year, player_info.drafted_round, player_info.drafted_pick
+                    ))
+                    conn.commit()
+            
+            # Store stats
+            stats_stored = 0
+            
+            with self.db.get_connection() as conn:
+                # Get or create player record to get the database player_id
+                cursor = conn.execute("SELECT id FROM players WHERE pfr_id = ?", (pfr_id,))
+                player_row = cursor.fetchone()
+                if player_row:
+                    db_player_id = player_row[0]
+                else:
+                    # Insert minimal player record if not exists
+                    cursor = conn.execute("""
+                        INSERT INTO players (pfr_id, name, position) 
+                        VALUES (?, ?, ?)
+                    """, (pfr_id, player_name, player_info.position if player_info else ''))
+                    db_player_id = cursor.lastrowid
+                    conn.commit()
+                
+                # Clear existing stats for this player
+                conn.execute("DELETE FROM passing_stats WHERE player_id = ?", (db_player_id,))
+                conn.execute("DELETE FROM rushing_stats WHERE player_id = ?", (db_player_id,))
+                conn.execute("DELETE FROM receiving_stats WHERE player_id = ?", (db_player_id,))
+                
+                # Helper function to get or create team_id
+                def get_team_id(team_abbr):
+                    if not team_abbr:
+                        return 1  # Default team ID
+                    cursor = conn.execute("SELECT id FROM teams WHERE abbreviation = ?", (team_abbr,))
+                    result = cursor.fetchone()
+                    if result:
+                        return result[0]
+                    else:
+                        # Create new team if not exists
+                        cursor = conn.execute("""
+                            INSERT INTO teams (abbreviation, name, city) 
+                            VALUES (?, ?, ?)
+                        """, (team_abbr, team_abbr, ''))
+                        conn.commit()
+                        return cursor.lastrowid
+                
+                # Insert passing stats
+                for stat in passing_stats:
+                    team_id = get_team_id(stat.team)
+                    conn.execute("""
+                        INSERT INTO passing_stats 
+                        (player_id, team_id, season, games, games_started, completions, attempts, 
+                         completion_pct, passing_yards, passing_tds, interceptions, yards_per_attempt, 
+                         yards_per_completion, quarterback_rating, sacks, sack_yards)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        db_player_id, team_id, stat.season, stat.games, stat.games_started,
+                        stat.completions, stat.attempts, stat.completion_pct, stat.passing_yards,
+                        stat.passing_tds, stat.interceptions, stat.yards_per_attempt,
+                        stat.yards_per_completion, stat.quarterback_rating, stat.sacks, stat.sack_yards
+                    ))
+                    stats_stored += 1
+                
+                # Insert rushing stats
+                for stat in rushing_stats:
+                    team_id = get_team_id(stat.team)
+                    conn.execute("""
+                        INSERT INTO rushing_stats 
+                        (player_id, team_id, season, games, games_started, rushing_attempts, 
+                         rushing_yards, yards_per_attempt, rushing_tds, longest_rush, fumbles, fumbles_lost)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        db_player_id, team_id, stat.season, stat.games, stat.games_started,
+                        stat.rushing_attempts, stat.rushing_yards, stat.yards_per_attempt,
+                        stat.rushing_tds, stat.longest_rush, stat.fumbles, stat.fumbles_lost
+                    ))
+                    stats_stored += 1
+                
+                # Insert receiving stats
+                for stat in receiving_stats:
+                    team_id = get_team_id(stat.team)
+                    conn.execute("""
+                        INSERT INTO receiving_stats 
+                        (player_id, team_id, season, games, games_started, targets, receptions,
+                         receiving_yards, yards_per_reception, receiving_tds, longest_reception,
+                         catch_pct, yards_per_target, fumbles, fumbles_lost)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        db_player_id, team_id, stat.season, stat.games, stat.games_started,
+                        stat.targets, stat.receptions, stat.receiving_yards, stat.yards_per_reception,
+                        stat.receiving_tds, stat.longest_reception, stat.catch_pct, stat.yards_per_target,
+                        stat.fumbles, stat.fumbles_lost
+                    ))
+                    stats_stored += 1
+                
+                conn.commit()
+            
+            logger.info(f"Successfully stored {stats_stored} stat records for {player_name}")
+            return True
             
         except Exception as e:
             logger.error(f"Error scraping stats for {player_name}: {str(e)}")
@@ -323,8 +474,47 @@ def analyze_player(player_name):
         logger.error(f"Error in analyze_player endpoint: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/players/<player_name>/refresh-stats', methods=['POST'])
+def refresh_player_stats(player_name):
+    """Refresh stats for a specific player from Pro Football Reference"""
+    try:
+        success = draft_manager.scrape_and_store_player_stats(player_name)
+        if success:
+            return jsonify({'success': True, 'message': 'Stats refreshed successfully'})
+        else:
+            return jsonify({'success': False, 'error': 'Failed to refresh stats'}), 500
+    except Exception as e:
+        logger.error(f"Error refreshing stats for {player_name}: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/refresh-all-stats', methods=['POST'])
+def refresh_all_stats():
+    """Refresh stats for all players (this could take a while)"""
+    try:
+        # Get all unique player names from draft values
+        with db.get_connection() as conn:
+            cursor = conn.execute("SELECT DISTINCT player_name FROM draft_values ORDER BY rank_overall LIMIT 100")
+            player_names = [row[0] for row in cursor.fetchall()]
+        
+        success_count = 0
+        for player_name in player_names:
+            try:
+                if draft_manager.scrape_and_store_player_stats(player_name):
+                    success_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to refresh stats for {player_name}: {str(e)}")
+                continue
+        
+        return jsonify({
+            'success': True, 
+            'message': f'Refreshed stats for {success_count} out of {len(player_names)} players'
+        })
+    except Exception as e:
+        logger.error(f"Error in refresh_all_stats: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # HTML Template with embedded CSS and JavaScript
-DRAFT_APP_HTML = '''
+DRAFT_APP_HTML = r'''
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -574,6 +764,23 @@ DRAFT_APP_HTML = '''
             cursor: not-allowed;
         }
         
+        .btn-refresh {
+            background: #FF9500;
+            color: white;
+            padding: 0.5rem 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+        }
+        
+        .btn-refresh:hover {
+            background: #E6850E;
+        }
+        
+        .btn-refresh:disabled {
+            background: #8E8E93;
+            cursor: not-allowed;
+        }
+        
         .player-detail {
             background: white;
             border-radius: 12px;
@@ -742,6 +949,12 @@ DRAFT_APP_HTML = '''
                 <button class="filter-btn" onclick="filterByPosition('K')">K</button>
             </div>
         </div>
+        
+        <div class="filter-section">
+            <button class="filter-btn" onclick="refreshAllStats()" id="refresh-all-btn" style="background: #FF9500; color: white; border-color: #FF9500;">
+                🔄 Refresh All Stats
+            </button>
+        </div>
     </div>
     
     <div class="main-container">
@@ -889,9 +1102,14 @@ DRAFT_APP_HTML = '''
                 `${player.player_name} (${player.position} - ${player.team || 'FA'})`;
                 
             const content = `
-                <button class="action-btn btn-analyze" onclick="analyzePlayer('${player.player_name}')" id="analyze-btn">
-                    🤖 Generate AI Analysis
-                </button>
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                    <button class="action-btn btn-analyze" onclick="analyzePlayer('${player.player_name}')" id="analyze-btn" style="flex: 1;">
+                        🤖 Generate AI Analysis
+                    </button>
+                    <button class="action-btn btn-refresh" onclick="refreshPlayerStats('${player.player_name}')" id="refresh-btn" style="flex: 1; background: #FF9500;">
+                        🔄 Refresh Stats
+                    </button>
+                </div>
                 
                 <div class="stats-grid">
                     <div class="stat-item">
@@ -1329,6 +1547,101 @@ DRAFT_APP_HTML = '''
                     analyzeBtn.disabled = false;
                 }, 3000);
                 console.error('Error analyzing player:', error);
+            }
+        }
+        
+        async function refreshPlayerStats(playerName) {
+            const refreshBtn = document.getElementById('refresh-btn');
+            if (!refreshBtn) return;
+            
+            // Disable button and show loading state
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = '🔄 Refreshing...';
+            
+            try {
+                const response = await fetch(`/api/players/${encodeURIComponent(playerName)}/refresh-stats`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                console.log('Refresh result:', result);
+                
+                if (result.success) {
+                    // Refresh player details to show updated stats
+                    await selectPlayer(playerName);
+                    
+                    // Show success message briefly
+                    refreshBtn.textContent = '✅ Stats Refreshed';
+                    setTimeout(() => {
+                        refreshBtn.textContent = '🔄 Refresh Stats';
+                        refreshBtn.disabled = false;
+                    }, 2000);
+                } else {
+                    refreshBtn.textContent = '❌ Refresh Failed';
+                    setTimeout(() => {
+                        refreshBtn.textContent = '🔄 Refresh Stats';
+                        refreshBtn.disabled = false;
+                    }, 3000);
+                    console.error('Refresh failed:', result.error);
+                }
+            } catch (error) {
+                refreshBtn.textContent = '❌ Error';
+                setTimeout(() => {
+                    refreshBtn.textContent = '🔄 Refresh Stats';
+                    refreshBtn.disabled = false;
+                }, 3000);
+                console.error('Error refreshing stats:', error);
+            }
+        }
+        
+        async function refreshAllStats() {
+            const refreshAllBtn = document.getElementById('refresh-all-btn');
+            if (!refreshAllBtn) return;
+            
+            // Confirm with user since this takes a long time
+            if (!confirm('This will refresh stats for the top 100 players and may take several minutes. Continue?')) {
+                return;
+            }
+            
+            // Disable button and show loading state
+            refreshAllBtn.disabled = true;
+            refreshAllBtn.textContent = '🔄 Refreshing All... (This may take a while)';
+            
+            try {
+                const response = await fetch('/api/refresh-all-stats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                console.log('Bulk refresh result:', result);
+                
+                if (result.success) {
+                    // Refresh the player list
+                    await loadPlayers(currentFilter, currentPosition, currentSearch);
+                    
+                    // Show success message with count
+                    refreshAllBtn.textContent = `✅ ${result.message}`;
+                    setTimeout(() => {
+                        refreshAllBtn.textContent = '🔄 Refresh All Stats';
+                        refreshAllBtn.disabled = false;
+                    }, 5000);
+                } else {
+                    refreshAllBtn.textContent = '❌ Bulk Refresh Failed';
+                    setTimeout(() => {
+                        refreshAllBtn.textContent = '🔄 Refresh All Stats';
+                        refreshAllBtn.disabled = false;
+                    }, 3000);
+                    console.error('Bulk refresh failed:', result.error);
+                }
+            } catch (error) {
+                refreshAllBtn.textContent = '❌ Error';
+                setTimeout(() => {
+                    refreshAllBtn.textContent = '🔄 Refresh All Stats';
+                    refreshAllBtn.disabled = false;
+                }, 3000);
+                console.error('Error with bulk refresh:', error);
             }
         }
     </script>

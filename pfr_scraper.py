@@ -1,15 +1,11 @@
-"""
-Pro Football Reference scraper for collecting NFL player statistics.
-Scrapes passing, rushing, and receiving stats for fantasy football analysis.
-"""
 
 import requests
 from bs4 import BeautifulSoup
 import time
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 import logging
 
 # Set up logging
@@ -109,7 +105,7 @@ class PFRScraper:
             logger.info(f"Fetching: {url}")
             response = self.session.get(url)
             response.raise_for_status()
-            time.sleep(self.delay)  # Rate limiting
+            time.sleep(self.delay)
             return BeautifulSoup(response.content, 'html.parser')
         except requests.RequestException as e:
             logger.error(f"Error fetching {url}: {e}")
@@ -132,7 +128,7 @@ class PFRScraper:
             return float(value.replace('%', ''))
         except (ValueError, AttributeError):
             return None
-    
+
     def get_player_info(self, pfr_id: str) -> Optional[PlayerInfo]:
         """Get basic player information from their PFR page"""
         url = f"{self.BASE_URL}/players/{pfr_id[0]}/{pfr_id}.htm"
@@ -142,30 +138,38 @@ class PFRScraper:
             return None
         
         try:
-            # Extract basic info from the player header - try multiple selectors
-            name_elem = soup.find('h1', {'itemprop': 'name'}) or soup.find('h1')
-            if name_elem:
-                name_text = name_elem.get_text().strip()
-                # Clean up name - remove nicknames in parentheses
-                name = name_text.split('(')[0].strip()
-            else:
-                name = ""
-            
-            # Position from the meta info
-            pos_elem = soup.find('p', string=re.compile(r'Position:'))
+            info_box = soup.find('div', {'id': 'info'})
+            if not info_box:
+                return None
+
+            # Get name from h1 tag
+            name_elem = soup.find('h1', {'itemprop': 'name'})
+            if not name_elem:
+                name_elem = soup.find('h1')
+            name = name_elem.get_text().strip() if name_elem else ""
+
+            # Position from the meta info - look for span or text containing position
             position = ""
+            pos_elem = info_box.find('p', string=re.compile(r'Position:'))
             if pos_elem:
                 pos_text = pos_elem.get_text()
                 pos_match = re.search(r'Position:\s*(\w+)', pos_text)
                 position = pos_match.group(1) if pos_match else ""
+            else:
+                # Try alternative approach - look for position in text
+                strong_tags = info_box.find_all('strong')
+                for strong in strong_tags:
+                    text = strong.get_text()
+                    if 'Position:' in text:
+                        position = text.replace('Position:', '').strip().split()[0]
             
             # Height and weight
             height = weight = None
-            hw_elem = soup.find('span', {'itemprop': 'height'})
+            hw_elem = info_box.find('span', {'itemprop': 'height'})
             if hw_elem:
                 height = hw_elem.get_text().strip()
             
-            wt_elem = soup.find('span', {'itemprop': 'weight'})
+            wt_elem = info_box.find('span', {'itemprop': 'weight'})
             if wt_elem:
                 weight_text = wt_elem.get_text().strip()
                 weight = self._safe_int(weight_text.replace('lb', ''))
@@ -181,7 +185,7 @@ class PFRScraper:
         except Exception as e:
             logger.error(f"Error parsing player info for {pfr_id}: {e}")
             return None
-    
+
     def get_player_stats(self, pfr_id: str) -> Tuple[List[PassingStats], List[RushingStats], List[ReceivingStats]]:
         """Get all stats for a player"""
         url = f"{self.BASE_URL}/players/{pfr_id[0]}/{pfr_id}.htm"
@@ -193,6 +197,11 @@ class PFRScraper:
         passing_stats = self._parse_passing_stats(soup, pfr_id)
         rushing_stats = self._parse_rushing_stats(soup, pfr_id)
         receiving_stats = self._parse_receiving_stats(soup, pfr_id)
+        
+        # Sort all stats by season descending (most recent first)
+        passing_stats.sort(key=lambda x: x.season, reverse=True)
+        rushing_stats.sort(key=lambda x: x.season, reverse=True)
+        receiving_stats.sort(key=lambda x: x.season, reverse=True)
         
         return passing_stats, rushing_stats, receiving_stats
     
@@ -211,36 +220,43 @@ class PFRScraper:
         for row in tbody.find_all('tr'):
             if 'thead' in row.get('class', []):
                 continue
-                
-            cells = row.find_all(['td', 'th'])
-            if len(cells) < 15:  # Minimum expected columns
-                continue
             
             try:
-                year_text = cells[0].get_text().strip()
+                year_cell = row.find('th', {'data-stat': 'year_id'})
+                if not year_cell:
+                    continue
+                year_text = year_cell.get_text().strip()
                 if not year_text.isdigit():
                     continue
                     
                 season = int(year_text)
-                team = cells[2].get_text().strip()
+                team_cell = row.find('td', {'data-stat': 'team_name_abbr'})
+                if not team_cell:
+                    continue
+                team = team_cell.get_text().strip()
+                
+                # Helper function to safely get cell text
+                def get_cell_value(stat_name):
+                    cell = row.find('td', {'data-stat': stat_name})
+                    return cell.get_text().strip() if cell else None
                 
                 stats.append(PassingStats(
                     player_id=pfr_id,
                     season=season,
                     team=team,
-                    games=self._safe_int(cells[4].get_text().strip()),
-                    games_started=self._safe_int(cells[5].get_text().strip()),
-                    completions=self._safe_int(cells[7].get_text().strip()),
-                    attempts=self._safe_int(cells[8].get_text().strip()),
-                    completion_pct=self._safe_float(cells[9].get_text().strip()),
-                    passing_yards=self._safe_int(cells[10].get_text().strip()),
-                    passing_tds=self._safe_int(cells[11].get_text().strip()),
-                    interceptions=self._safe_int(cells[12].get_text().strip()),
-                    yards_per_attempt=self._safe_float(cells[15].get_text().strip()),
-                    quarterback_rating=self._safe_float(cells[17].get_text().strip()),
+                    games=self._safe_int(get_cell_value('games')),
+                    games_started=self._safe_int(get_cell_value('games_started')),
+                    completions=self._safe_int(get_cell_value('pass_cmp')),
+                    attempts=self._safe_int(get_cell_value('pass_att')),
+                    completion_pct=self._safe_float(get_cell_value('pass_cmp_pct')),
+                    passing_yards=self._safe_int(get_cell_value('pass_yds')),
+                    passing_tds=self._safe_int(get_cell_value('pass_td')),
+                    interceptions=self._safe_int(get_cell_value('pass_int')),
+                    yards_per_attempt=self._safe_float(get_cell_value('pass_yds_per_att')),
+                    quarterback_rating=self._safe_float(get_cell_value('pass_rating')),
                 ))
                 
-            except (IndexError, ValueError) as e:
+            except (AttributeError, ValueError) as e:
                 logger.warning(f"Error parsing passing row for {pfr_id}: {e}")
                 continue
         
@@ -249,7 +265,7 @@ class PFRScraper:
     def _parse_rushing_stats(self, soup: BeautifulSoup, pfr_id: str) -> List[RushingStats]:
         """Parse rushing statistics table"""
         stats = []
-        rushing_table = soup.find('table', {'id': 'rushing_and_receiving'})
+        rushing_table = soup.find('table', {'id': 'rushing_and_receiving'}) or soup.find('table', {'id': 'receiving_and_rushing'})
         
         if not rushing_table:
             return stats
@@ -261,33 +277,40 @@ class PFRScraper:
         for row in tbody.find_all('tr'):
             if 'thead' in row.get('class', []):
                 continue
-                
-            cells = row.find_all(['td', 'th'])
-            if len(cells) < 10:
-                continue
             
             try:
-                year_text = cells[0].get_text().strip()
+                year_cell = row.find('th', {'data-stat': 'year_id'})
+                if not year_cell:
+                    continue
+                year_text = year_cell.get_text().strip()
                 if not year_text.isdigit():
                     continue
                     
                 season = int(year_text)
-                team = cells[2].get_text().strip()
+                team_cell = row.find('td', {'data-stat': 'team_name_abbr'})
+                if not team_cell:
+                    continue
+                team = team_cell.get_text().strip()
+                
+                # Helper function to safely get cell text by data-stat attribute
+                def get_cell_value(stat_name):
+                    cell = row.find('td', {'data-stat': stat_name})
+                    return cell.get_text().strip() if cell else None
                 
                 stats.append(RushingStats(
                     player_id=pfr_id,
                     season=season,
                     team=team,
-                    games=self._safe_int(cells[4].get_text().strip()),
-                    games_started=self._safe_int(cells[5].get_text().strip()),
-                    rushing_attempts=self._safe_int(cells[6].get_text().strip()),
-                    rushing_yards=self._safe_int(cells[7].get_text().strip()),
-                    yards_per_attempt=self._safe_float(cells[8].get_text().strip()),
-                    rushing_tds=self._safe_int(cells[9].get_text().strip()),
-                    longest_rush=self._safe_int(cells[10].get_text().strip()),
+                    games=self._safe_int(get_cell_value('games')),
+                    games_started=self._safe_int(get_cell_value('games_started')),
+                    rushing_attempts=self._safe_int(get_cell_value('rush_att')),
+                    rushing_yards=self._safe_int(get_cell_value('rush_yds')),
+                    yards_per_attempt=self._safe_float(get_cell_value('rush_yds_per_att')),
+                    rushing_tds=self._safe_int(get_cell_value('rush_td')),
+                    longest_rush=self._safe_int(get_cell_value('rush_long')),
                 ))
                 
-            except (IndexError, ValueError) as e:
+            except (AttributeError, ValueError) as e:
                 logger.warning(f"Error parsing rushing row for {pfr_id}: {e}")
                 continue
         
@@ -296,7 +319,7 @@ class PFRScraper:
     def _parse_receiving_stats(self, soup: BeautifulSoup, pfr_id: str) -> List[ReceivingStats]:
         """Parse receiving statistics table"""
         stats = []
-        receiving_table = soup.find('table', {'id': 'rushing_and_receiving'})
+        receiving_table = soup.find('table', {'id': 'rushing_and_receiving'}) or soup.find('table', {'id': 'receiving_and_rushing'})
         
         if not receiving_table:
             return stats
@@ -308,34 +331,41 @@ class PFRScraper:
         for row in tbody.find_all('tr'):
             if 'thead' in row.get('class', []):
                 continue
-                
-            cells = row.find_all(['td', 'th'])
-            if len(cells) < 18:  # Need receiving columns
-                continue
             
             try:
-                year_text = cells[0].get_text().strip()
+                year_cell = row.find('th', {'data-stat': 'year_id'})
+                if not year_cell:
+                    continue
+                year_text = year_cell.get_text().strip()
                 if not year_text.isdigit():
                     continue
                     
                 season = int(year_text)
-                team = cells[2].get_text().strip()
+                team_cell = row.find('td', {'data-stat': 'team_name_abbr'})
+                if not team_cell:
+                    continue
+                team = team_cell.get_text().strip()
+                
+                # Helper function to safely get cell text by data-stat attribute
+                def get_cell_value(stat_name):
+                    cell = row.find('td', {'data-stat': stat_name})
+                    return cell.get_text().strip() if cell else None
                 
                 stats.append(ReceivingStats(
                     player_id=pfr_id,
                     season=season,
                     team=team,
-                    games=self._safe_int(cells[4].get_text().strip()),
-                    games_started=self._safe_int(cells[5].get_text().strip()),
-                    targets=self._safe_int(cells[11].get_text().strip()),
-                    receptions=self._safe_int(cells[12].get_text().strip()),
-                    receiving_yards=self._safe_int(cells[13].get_text().strip()),
-                    yards_per_reception=self._safe_float(cells[14].get_text().strip()),
-                    receiving_tds=self._safe_int(cells[15].get_text().strip()),
-                    longest_reception=self._safe_int(cells[16].get_text().strip()),
+                    games=self._safe_int(get_cell_value('games')),
+                    games_started=self._safe_int(get_cell_value('games_started')),
+                    targets=self._safe_int(get_cell_value('targets')),
+                    receptions=self._safe_int(get_cell_value('rec')),
+                    receiving_yards=self._safe_int(get_cell_value('rec_yds')),
+                    yards_per_reception=self._safe_float(get_cell_value('rec_yds_per_rec')),
+                    receiving_tds=self._safe_int(get_cell_value('rec_td')),
+                    longest_reception=self._safe_int(get_cell_value('rec_long')),
                 ))
                 
-            except (IndexError, ValueError) as e:
+            except (AttributeError, ValueError) as e:
                 logger.warning(f"Error parsing receiving row for {pfr_id}: {e}")
                 continue
         
@@ -343,40 +373,44 @@ class PFRScraper:
     
     def search_player(self, name: str) -> List[str]:
         """Search for players by name and return PFR IDs"""
-        # This is a simplified search - PFR has a search endpoint
-        # For now, we'll generate the expected PFR ID format
-        # Real implementation would use PFR's search API
+        search_url = f"{self.BASE_URL}/search/search.fcgi?search={quote(name)}"
         
-        name_parts = name.strip().split()
-        if len(name_parts) < 2:
+        try:
+            logger.info(f"Fetching: {search_url}")
+            response = self.session.get(search_url)
+            response.raise_for_status()
+            time.sleep(self.delay)
+            
+            # Check if we were redirected directly to a player page
+            if '/players/' in response.url:
+                # Extract PFR ID from the URL
+                pfr_id = response.url.split('/')[-1].replace('.htm', '')
+                logger.info(f"Search redirected to player page: {pfr_id}")
+                return [pfr_id]
+            
+            # Parse search results page
+            soup = BeautifulSoup(response.content, 'html.parser')
+            pfr_ids = []
+            search_results = soup.find('div', {'id': 'players'})
+            if search_results:
+                for item in search_results.find_all('div', {'class': 'search-item'}):
+                    link = item.find('a')
+                    if link and 'players' in link['href']:
+                        pfr_id = link['href'].split('/')[-1].replace('.htm', '')
+                        pfr_ids.append(pfr_id)
+            return pfr_ids
+            
+        except requests.RequestException as e:
+            logger.error(f"Error searching for {name}: {e}")
             return []
-        
-        first_name = name_parts[0]
-        last_name = name_parts[-1]
-        
-        # PFR ID format: LastName(first4chars)FirstName(first2chars)00
-        # Examples: MahoPa00 (Mahomes + Pa), AlleJo02 (Allen + Jo)
-        pfr_id = f"{last_name[:4]}{first_name[:2]}00"
-        
-        return [pfr_id]
 
 if __name__ == "__main__":
     # Example usage
     scraper = PFRScraper()
     
-    # Test with Patrick Mahomes
-    pfr_id = "MahoPa00"
+    # Test with JackLa00
+    pfr_id = "JackLa00"
     
     print("Getting player info...")
     player_info = scraper.get_player_info(pfr_id)
     print(f"Player: {player_info}")
-    
-    print("\nGetting stats...")
-    passing, rushing, receiving = scraper.get_player_stats(pfr_id)
-    
-    print(f"Found {len(passing)} passing seasons")
-    print(f"Found {len(rushing)} rushing seasons")  
-    print(f"Found {len(receiving)} receiving seasons")
-    
-    if passing:
-        print(f"Latest passing stats: {passing[-1]}")
