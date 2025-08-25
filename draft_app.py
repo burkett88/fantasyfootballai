@@ -1018,7 +1018,7 @@ DRAFT_APP_HTML = r'''
             
             grid.innerHTML = playerList.map(player => `
                 <div class="player-row ${getPlayerClasses(player)}" 
-                     onclick="selectPlayer('${player.player_name}', this)">
+                     onclick="selectPlayer('${player.player_name.replace(/'/g, "\\'")}', this)">
                     <div class="rank">${player.rank_overall}</div>
                     <div class="position ${player.position}">${player.position}</div>
                     <div>
@@ -1032,15 +1032,15 @@ DRAFT_APP_HTML = r'''
                     </div>
                     <div class="actions" onclick="event.stopPropagation()">
                         <button class="action-btn btn-target" 
-                                onclick="toggleStatus('${player.player_name}', 'target')">
+                                onclick="toggleStatus('${player.player_name.replace(/'/g, "\\'")}', 'target')">
                             ${player.is_target ? '✓' : 'T'}
                         </button>
                         <button class="action-btn btn-avoid" 
-                                onclick="toggleStatus('${player.player_name}', 'avoid')">
+                                onclick="toggleStatus('${player.player_name.replace(/'/g, "\\'")}', 'avoid')">
                             ${player.is_avoid ? '✓' : 'A'}
                         </button>
                         <button class="action-btn btn-drafted" 
-                                onclick="toggleStatus('${player.player_name}', 'drafted')">
+                                onclick="toggleStatus('${player.player_name.replace(/'/g, "\\'")}', 'drafted')">
                             ${player.is_drafted ? '✓' : 'D'}
                         </button>
                     </div>
@@ -1103,10 +1103,10 @@ DRAFT_APP_HTML = r'''
                 
             const content = `
                 <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-                    <button class="action-btn btn-analyze" onclick="analyzePlayer('${player.player_name}')" id="analyze-btn" style="flex: 1;">
+                    <button class="action-btn btn-analyze" onclick="analyzePlayer('${player.player_name.replace(/'/g, "\\'")}')" id="analyze-btn" style="flex: 1;">
                         🤖 Generate AI Analysis
                     </button>
-                    <button class="action-btn btn-refresh" onclick="refreshPlayerStats('${player.player_name}')" id="refresh-btn" style="flex: 1; background: #FF9500;">
+                    <button class="action-btn btn-refresh" onclick="refreshPlayerStats('${player.player_name.replace(/'/g, "\\'")}')" id="refresh-btn" style="flex: 1; background: #FF9500;">
                         🔄 Refresh Stats
                     </button>
                 </div>

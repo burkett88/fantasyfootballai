@@ -306,7 +306,7 @@ class FootballDatabase:
                 FROM passing_stats ps
                 JOIN teams t ON ps.team_id = t.id
                 WHERE ps.player_id = ? {season_filter}
-                ORDER BY ps.season
+                ORDER BY ps.season DESC
             """, params)
             passing_stats = [dict(row) for row in cursor.fetchall()]
             
@@ -316,7 +316,7 @@ class FootballDatabase:
                 FROM rushing_stats rs
                 JOIN teams t ON rs.team_id = t.id
                 WHERE rs.player_id = ? {season_filter}
-                ORDER BY rs.season
+                ORDER BY rs.season DESC
             """, params)
             rushing_stats = [dict(row) for row in cursor.fetchall()]
             
@@ -326,7 +326,7 @@ class FootballDatabase:
                 FROM receiving_stats recv
                 JOIN teams t ON recv.team_id = t.id
                 WHERE recv.player_id = ? {season_filter}
-                ORDER BY recv.season
+                ORDER BY recv.season DESC
             """, params)
             receiving_stats = [dict(row) for row in cursor.fetchall()]
             
