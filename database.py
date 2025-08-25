@@ -269,11 +269,24 @@ class FootballDatabase:
             Dictionary with player info and stats
         """
         with self.get_connection() as conn:
-            # Find player
-            cursor = conn.execute(
-                "SELECT * FROM players WHERE name LIKE ? OR pfr_id = ?",
-                (f"%{player_name}%", player_name)
-            )
+            # Find player - prefer the one with the most recent stats
+            cursor = conn.execute("""
+                SELECT p.*, 
+                       (SELECT COUNT(*) FROM passing_stats ps WHERE ps.player_id = p.id) + 
+                       (SELECT COUNT(*) FROM rushing_stats rs WHERE rs.player_id = p.id) + 
+                       (SELECT COUNT(*) FROM receiving_stats recv WHERE recv.player_id = p.id) as total_stats,
+                       (SELECT MAX(season) FROM (
+                           SELECT MAX(season) as season FROM passing_stats WHERE player_id = p.id
+                           UNION ALL
+                           SELECT MAX(season) as season FROM rushing_stats WHERE player_id = p.id  
+                           UNION ALL
+                           SELECT MAX(season) as season FROM receiving_stats WHERE player_id = p.id
+                       )) as latest_season
+                FROM players p 
+                WHERE p.name LIKE ? OR p.pfr_id = ?
+                ORDER BY latest_season DESC, total_stats DESC
+                LIMIT 1
+            """, (f"%{player_name}%", player_name))
             player = cursor.fetchone()
             
             if not player:
