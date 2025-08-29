@@ -28,6 +28,9 @@ app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 # Initialize database
 db = FootballDatabase()
 
+# Auction value inflation factor (11% increase)
+AUCTION_INFLATION_FACTOR = 1.11
+
 # Configure DSPy for LLM analysis
 api_key = os.getenv("OPENAI_API_KEY")
 if api_key:
@@ -63,6 +66,7 @@ class DraftManager:
         query = """
             SELECT 
                 dv.*,
+                ROUND(dv.draft_value * ?) as draft_value,
                 COALESCE(dps.is_target, 0) as is_target,
                 COALESCE(dps.is_avoid, 0) as is_avoid,
                 COALESCE(dps.is_drafted, 0) as is_drafted,
@@ -80,10 +84,10 @@ class DraftManager:
             FROM draft_values dv
             LEFT JOIN draft_player_status dps ON dv.player_name = dps.player_name AND dv.season = dps.season
             LEFT JOIN player_analysis pa ON dv.player_name = pa.player_name AND dv.season = pa.season
-            WHERE dv.season = ?
+            WHERE dv.season = ? AND dv.position NOT IN ('K', 'DST')
         """
         
-        params = [season]
+        params = [AUCTION_INFLATION_FACTOR, season]
         
         # Apply status filter
         if status_filter == "available":
@@ -553,10 +557,10 @@ DRAFT_APP_HTML = r'''
         
         .controls {
             background: white;
-            padding: 1rem;
+            padding: 0.75rem;
             border-bottom: 1px solid #d2d2d7;
             display: flex;
-            gap: 1rem;
+            gap: 0.75rem;
             align-items: center;
             flex-wrap: wrap;
         }
@@ -606,16 +610,23 @@ DRAFT_APP_HTML = r'''
         
         .main-container {
             display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 1rem;
-            padding: 1rem;
-            height: calc(100vh - 120px);
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            height: calc(100vh - 100px);
         }
         
         @media (max-width: 1200px) {
             .main-container {
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: 1fr 1fr;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .main-container {
                 grid-template-columns: 1fr;
-                grid-template-rows: 40% 60%;
+                grid-template-rows: 1fr 1fr 1fr 1fr;
             }
         }
         
@@ -628,11 +639,11 @@ DRAFT_APP_HTML = r'''
         }
         
         .player-list-header {
-            padding: 0.75rem;
+            padding: 0.5rem;
             border-bottom: 1px solid #d2d2d7;
             font-weight: 600;
             background: #f8f8f8;
-            font-size: 0.875rem;
+            font-size: 0.75rem;
         }
         
         .player-grid {
@@ -642,14 +653,15 @@ DRAFT_APP_HTML = r'''
         
         .player-row {
             display: grid;
-            grid-template-columns: 40px 40px 1fr 50px 60px 100px;
-            gap: 0.5rem;
-            padding: 0.5rem 0.75rem;
+            grid-template-columns: 20px 25px 100px 35px 25px 60px;
+            gap: 0.1rem;
+            padding: 0.2rem 0.25rem;
             border-bottom: 1px solid #f0f0f0;
             cursor: pointer;
             transition: background-color 0.2s;
             align-items: center;
-            font-size: 0.8rem;
+            font-size: 0.65rem;
+            min-height: 22px;
         }
         
         .player-row:hover {
@@ -680,13 +692,14 @@ DRAFT_APP_HTML = r'''
         }
         
         .position {
-            font-size: 0.625rem;
+            font-size: 0.5rem;
             background: #007AFF;
             color: white;
-            padding: 0.2rem 0.4rem;
-            border-radius: 3px;
+            padding: 0.05rem 0.15rem;
+            border-radius: 2px;
             text-align: center;
             font-weight: 600;
+            line-height: 1;
         }
         
         .position.QB { background: #FF9500; }
@@ -698,12 +711,23 @@ DRAFT_APP_HTML = r'''
         
         .player-name {
             font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .player-row > div:nth-child(3) {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 0.6rem;
         }
         
         .player-team {
-            font-size: 0.625rem;
+            font-size: 0.5rem;
             color: #8E8E93;
-            margin-left: 0.25rem;
+            margin-left: 0.2rem;
+            font-weight: 500;
         }
         
         .value {
@@ -718,17 +742,21 @@ DRAFT_APP_HTML = r'''
         
         .actions {
             display: flex;
-            gap: 0.25rem;
+            gap: 0.05rem;
+            justify-content: flex-start;
         }
         
         .action-btn {
-            padding: 0.2rem 0.4rem;
+            padding: 0.05rem 0.15rem;
             border: none;
-            border-radius: 3px;
+            border-radius: 1px;
             cursor: pointer;
-            font-size: 0.625rem;
-            font-weight: 500;
+            font-size: 0.45rem;
+            font-weight: 600;
             transition: all 0.2s;
+            line-height: 1;
+            min-width: 14px;
+            text-align: center;
         }
         
         .btn-target {
@@ -937,18 +965,6 @@ DRAFT_APP_HTML = r'''
             </div>
         </div>
         
-        <div class="filter-section">
-            <span class="filter-label">Position:</span>
-            <div class="filter-buttons" id="position-filters">
-                <button class="filter-btn active" onclick="filterByPosition('all')">All</button>
-                <button class="filter-btn" onclick="filterByPosition('QB')">QB</button>
-                <button class="filter-btn" onclick="filterByPosition('RB')">RB</button>
-                <button class="filter-btn" onclick="filterByPosition('WR')">WR</button>
-                <button class="filter-btn" onclick="filterByPosition('TE')">TE</button>
-                <button class="filter-btn" onclick="filterByPosition('DST')">DST</button>
-                <button class="filter-btn" onclick="filterByPosition('K')">K</button>
-            </div>
-        </div>
         
         <div class="filter-section">
             <button class="filter-btn" onclick="refreshAllStats()" id="refresh-all-btn" style="background: #FF9500; color: white; border-color: #FF9500;">
@@ -960,21 +976,50 @@ DRAFT_APP_HTML = r'''
     <div class="main-container">
         <div class="player-list">
             <div class="player-list-header">
-                Players
+                Quarterbacks
             </div>
-            <div class="player-grid" id="player-grid">
-                <div class="loading">Loading players...</div>
+            <div class="player-grid" id="qb-grid">
+                <div class="loading">Loading QBs...</div>
             </div>
         </div>
         
-        <div class="player-detail">
-            <div class="detail-header">
-                <strong id="detail-title">Player Details</strong>
+        <div class="player-list">
+            <div class="player-list-header">
+                Running Backs
             </div>
-            <div class="detail-content" id="detail-content">
-                <div class="empty-state">
-                    Select a player to view details
-                </div>
+            <div class="player-grid" id="rb-grid">
+                <div class="loading">Loading RBs...</div>
+            </div>
+        </div>
+        
+        <div class="player-list">
+            <div class="player-list-header">
+                Wide Receivers
+            </div>
+            <div class="player-grid" id="wr-grid">
+                <div class="loading">Loading WRs...</div>
+            </div>
+        </div>
+        
+        <div class="player-list">
+            <div class="player-list-header">
+                Tight Ends
+            </div>
+            <div class="player-grid" id="te-grid">
+                <div class="loading">Loading TEs...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Player Profile Modal -->
+    <div id="player-profile-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; border-radius: 12px; width: 90%; max-width: 800px; max-height: 90%; overflow-y: auto;">
+            <div style="padding: 1rem; border-bottom: 1px solid #d2d2d7; display: flex; justify-content: between; align-items: center;">
+                <h2 id="modal-player-title" style="margin: 0; flex: 1;">Player Profile</h2>
+                <button onclick="closePlayerProfile()" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; padding: 0.25rem;">&times;</button>
+            </div>
+            <div id="modal-player-content" style="padding: 1rem;">
+                Loading...
             </div>
         </div>
     </div>
@@ -988,28 +1033,32 @@ DRAFT_APP_HTML = r'''
         
         // Load players on page load
         document.addEventListener('DOMContentLoaded', function() {
-            loadPlayers();
+            loadAllPositions();
         });
         
-        async function loadPlayers(filter = 'all', position = 'all', search = '') {
-            try {
-                const url = new URL('/api/players', window.location.origin);
-                if (filter !== 'all') url.searchParams.append('filter', filter);
-                if (position !== 'all') url.searchParams.append('position', position);
-                if (search) url.searchParams.append('search', search);
-                
-                const response = await fetch(url);
-                players = await response.json();
-                renderPlayerList(players);
-            } catch (error) {
-                console.error('Error loading players:', error);
-                document.getElementById('player-grid').innerHTML = 
-                    '<div class="loading">Error loading players</div>';
+        async function loadAllPositions(filter = 'all', search = '') {
+            const positions = ['QB', 'RB', 'WR', 'TE'];
+            
+            for (const position of positions) {
+                try {
+                    const url = new URL('/api/players', window.location.origin);
+                    if (filter !== 'all') url.searchParams.append('filter', filter);
+                    url.searchParams.append('position', position);
+                    if (search) url.searchParams.append('search', search);
+                    
+                    const response = await fetch(url);
+                    const positionPlayers = await response.json();
+                    renderPositionList(position, positionPlayers);
+                } catch (error) {
+                    console.error(`Error loading ${position} players:`, error);
+                    document.getElementById(`${position.toLowerCase()}-grid`).innerHTML = 
+                        '<div class="loading">Error loading players</div>';
+                }
             }
         }
         
-        function renderPlayerList(playerList) {
-            const grid = document.getElementById('player-grid');
+        function renderPositionList(position, playerList) {
+            const grid = document.getElementById(`${position.toLowerCase()}-grid`);
             
             if (playerList.length === 0) {
                 grid.innerHTML = '<div class="loading">No players found</div>';
@@ -1018,12 +1067,11 @@ DRAFT_APP_HTML = r'''
             
             grid.innerHTML = playerList.map(player => `
                 <div class="player-row ${getPlayerClasses(player)}" 
-                     onclick="selectPlayer('${player.player_name.replace(/'/g, "\\'")}', this)">
+                     onclick="openPlayerProfile('${player.player_name.replace(/'/g, "\\'")}')">
                     <div class="rank">${player.rank_overall}</div>
                     <div class="position ${player.position}">${player.position}</div>
                     <div>
-                        <span class="player-name">${player.player_name}</span>
-                        <span class="player-team">${player.team || ''}</span>
+                        <span class="player-name">${player.player_name}</span><span class="player-team">${player.team ? ' (' + player.team + ')' : ''}</span>
                     </div>
                     <div class="value">$${player.draft_value}</div>
                     <div class="indicators">
@@ -1057,25 +1105,16 @@ DRAFT_APP_HTML = r'''
             return classes.join(' ');
         }
         
-        async function selectPlayer(playerName, clickedElement = null) {
+        async function openPlayerProfile(playerName) {
             selectedPlayer = playerName;
             
-            // Update visual selection
-            document.querySelectorAll('.player-row').forEach(row => {
-                row.classList.remove('selected');
-            });
+            // Show modal
+            const modal = document.getElementById('player-profile-modal');
+            modal.style.display = 'block';
             
-            // Add selected class to the clicked element or find it by player name
-            if (clickedElement) {
-                clickedElement.classList.add('selected');
-            } else {
-                // Find the player row and select it
-                document.querySelectorAll('.player-row').forEach(row => {
-                    if (row.textContent.includes(playerName)) {
-                        row.classList.add('selected');
-                    }
-                });
-            }
+            // Set loading state
+            document.getElementById('modal-player-title').textContent = `${playerName} - Loading...`;
+            document.getElementById('modal-player-content').innerHTML = '<div class="loading">Loading player details...</div>';
             
             // Load player details
             try {
@@ -1084,23 +1123,26 @@ DRAFT_APP_HTML = r'''
                 console.log('Player details loaded:', player);
                 
                 if (player.error) {
-                    document.getElementById('detail-content').innerHTML = 
+                    document.getElementById('modal-player-content').innerHTML = 
                         `<div class="empty-state">${player.error}</div>`;
                     return;
                 }
                 
-                renderPlayerDetail(player);
+                document.getElementById('modal-player-title').textContent = `${player.player_name} (${player.position} - ${player.team || 'FA'})`;
+                renderPlayerDetailInModal(player);
             } catch (error) {
                 console.error('Error loading player details:', error);
-                document.getElementById('detail-content').innerHTML = 
+                document.getElementById('modal-player-content').innerHTML = 
                     `<div class="empty-state">Error loading player details</div>`;
             }
         }
         
-        function renderPlayerDetail(player) {
-            document.getElementById('detail-title').textContent = 
-                `${player.player_name} (${player.position} - ${player.team || 'FA'})`;
-                
+        function closePlayerProfile() {
+            document.getElementById('player-profile-modal').style.display = 'none';
+            selectedPlayer = null;
+        }
+        
+        function renderPlayerDetailInModal(player) {
             const content = `
                 <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
                     <button class="action-btn btn-analyze" onclick="analyzePlayer('${player.player_name.replace(/'/g, "\\'")}')" id="analyze-btn" style="flex: 1;">
@@ -1197,11 +1239,33 @@ DRAFT_APP_HTML = r'''
                 ` : ''}
             `;
             
-            document.getElementById('detail-content').innerHTML = content;
+            document.getElementById('modal-player-content').innerHTML = content;
         }
         
         async function toggleStatus(playerName, statusType) {
-            const player = players.find(p => p.player_name === playerName);
+            // Find player across all positions
+            let player = null;
+            const positions = ['QB', 'RB', 'WR', 'TE'];
+            
+            // Get fresh player data
+            for (const position of positions) {
+                try {
+                    const url = new URL('/api/players', window.location.origin);
+                    url.searchParams.append('position', position);
+                    url.searchParams.append('search', playerName);
+                    
+                    const response = await fetch(url);
+                    const searchResults = await response.json();
+                    const foundPlayer = searchResults.find(p => p.player_name === playerName);
+                    if (foundPlayer) {
+                        player = foundPlayer;
+                        break;
+                    }
+                } catch (error) {
+                    console.error(`Error searching for player in ${position}:`, error);
+                }
+            }
+            
             if (!player) return;
             
             const updates = {
@@ -1212,12 +1276,22 @@ DRAFT_APP_HTML = r'''
                 has_breakout_potential: player.has_breakout_potential
             };
             
-            // If marking as drafted, prompt for details
-            if (statusType === 'drafted' && !player.is_drafted) {
-                const draftedBy = prompt('Drafted by (optional):') || '';
-                const draftedPrice = prompt('Draft price (optional):') || 0;
-                updates.drafted_by = draftedBy;
-                updates.drafted_price = parseInt(draftedPrice) || 0;
+            // Set default values for drafted fields
+            if (statusType === 'drafted') {
+                updates.drafted_by = '';
+                updates.drafted_price = 0;
+                
+                // If marking as drafted, remove target status
+                if (!player.is_drafted) {
+                    updates.is_target = false;
+                }
+            }
+            
+            // If marking as target, remove drafted status
+            if (statusType === 'target' && !player.is_target && player.is_drafted) {
+                updates.is_drafted = false;
+                updates.drafted_by = '';
+                updates.drafted_price = 0;
             }
             
             try {
@@ -1230,11 +1304,13 @@ DRAFT_APP_HTML = r'''
                 if (response.ok) {
                     // Update local data
                     Object.assign(player, updates);
-                    renderPlayerList(players);
                     
-                    // Update detail view if this player is selected
+                    // Refresh all position lists
+                    loadAllPositions(currentFilter, currentSearch);
+                    
+                    // Update modal if this player is selected
                     if (selectedPlayer === playerName) {
-                        renderPlayerDetail(player);
+                        renderPlayerDetailInModal(player);
                     }
                 }
             } catch (error) {
@@ -1251,24 +1327,12 @@ DRAFT_APP_HTML = r'''
             });
             event.target.classList.add('active');
             
-            loadPlayers(filter, currentPosition, currentSearch);
-        }
-        
-        function filterByPosition(position) {
-            currentPosition = position;
-            
-            // Update button states for position filters only
-            document.querySelectorAll('#position-filters .filter-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
-            
-            loadPlayers(currentFilter, position, currentSearch);
+            loadAllPositions(filter, currentSearch);
         }
         
         function searchPlayers(searchTerm) {
             currentSearch = searchTerm;
-            loadPlayers(currentFilter, currentPosition, searchTerm);
+            loadAllPositions(currentFilter, searchTerm);
         }
         
         function calculateFantasyPoints(passingStats, rushingStats, receivingStats) {
@@ -1523,8 +1587,8 @@ DRAFT_APP_HTML = r'''
                 console.log('Analysis result:', result);
                 
                 if (result.success) {
-                    // Refresh player details to show new analysis
-                    await selectPlayer(playerName);
+                    // Refresh player profile to show new analysis
+                    await openPlayerProfile(playerName);
                     
                     // Show success message briefly
                     analyzeBtn.textContent = '✅ Analysis Complete';
@@ -1568,8 +1632,8 @@ DRAFT_APP_HTML = r'''
                 console.log('Refresh result:', result);
                 
                 if (result.success) {
-                    // Refresh player details to show updated stats
-                    await selectPlayer(playerName);
+                    // Refresh player profile to show updated stats
+                    await openPlayerProfile(playerName);
                     
                     // Show success message briefly
                     refreshBtn.textContent = '✅ Stats Refreshed';
@@ -1618,8 +1682,8 @@ DRAFT_APP_HTML = r'''
                 console.log('Bulk refresh result:', result);
                 
                 if (result.success) {
-                    // Refresh the player list
-                    await loadPlayers(currentFilter, currentPosition, currentSearch);
+                    // Refresh all position lists
+                    await loadAllPositions(currentFilter, currentSearch);
                     
                     // Show success message with count
                     refreshAllBtn.textContent = `✅ ${result.message}`;
